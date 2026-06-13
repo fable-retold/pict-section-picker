@@ -207,6 +207,11 @@ class PictProviderPicker extends libPictProvider
 	 *   - EntityTag {string} - optional record field whose value becomes a `Tag` badge on each option
 	 *     (e.g. a `LineItem`'s `ItemNumber`). The picker view renders it as a styled badge alongside the
 	 *     label (ordering via the picker's `TagLast` option). Composes with JoinEntity (tag is outermost).
+	 *   - EntityTags {Array<string|{Field:string, Label?:string, Template?:string}>} - a SET of extra
+	 *     fields rendered as multiple disambiguation chips (e.g. `['ISBN', { Field: 'PublicationYear',
+	 *     Label: 'Year' }]`). A string spec shows the raw value; an object spec can prefix a `Label`
+	 *     (`"Year: 2000"`) or render a `Template` against the whole record. Renders as `Tags` (an array)
+	 *     alongside the optional single `Tag`.
 	 * @return {(pSearchTerm: string, pPage: number) => Promise<{results: Array<any>, hasMore: boolean}>}
 	 */
 	createEntityDataProvider(pConfig)
@@ -221,6 +226,7 @@ class PictProviderPicker extends libPictProvider
 		const tmpMapRecord = (typeof pConfig.MapRecord === 'function') ? pConfig.MapRecord : false;
 		const tmpJoinConfig = this._resolveJoinConfig(pConfig);
 		const tmpEntityTagField = pConfig.EntityTag || false;
+		const tmpEntityTagFields = Array.isArray(pConfig.EntityTags) ? pConfig.EntityTags : false;
 		const tmpTextTemplate = pConfig.TextTemplate || false;
 
 		return (pSearchTerm, pPage) => new Promise((resolve, reject) =>
@@ -259,7 +265,7 @@ class PictProviderPicker extends libPictProvider
 					{
 						const tmpResults = pDecorated.map((pRecord) => tmpMapRecord
 							? tmpMapRecord(pRecord)
-							: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate));
+							: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
 						// hasMore: a full page came back, so there is (probably) another. Avoids a Count round-trip.
 						return resolve({ results: tmpResults, hasMore: (tmpList.length >= tmpPageSize) });
 					});
@@ -313,7 +319,7 @@ class PictProviderPicker extends libPictProvider
 	 * @param {false | Record<string, any>} pJoinConfig @param {string|false} pTagField
 	 * @return {{Value:any, Text:any, Record:any, Tag?:any}}
 	 */
-	_composeOption(pRecord, pValueField, pTextField, pJoinConfig, pTagField, pTextTemplate)
+	_composeOption(pRecord, pValueField, pTextField, pJoinConfig, pTagField, pTextTemplate, pTagFields)
 	{
 		// The option label is either a single field (pTextField) or — when a TextTemplate is configured — a
 		// template rendered against the whole record, so a host can show a composed, disambiguated display
@@ -326,7 +332,37 @@ class PictProviderPicker extends libPictProvider
 			: tmpBaseText;
 		const tmpOption = { Value: pRecord[pValueField], Text: tmpText, Record: pRecord };
 		if (pTagField) { tmpOption.Tag = pRecord[pTagField]; }
+		// EntityTags: a set of extra fields rendered as disambiguation chips (e.g. a book's ISBN + Year).
+		if (Array.isArray(pTagFields) && pTagFields.length > 0)
+		{
+			tmpOption.Tags = pTagFields
+				.map((pSpec) => this._composeTagValue(pSpec, pRecord))
+				.filter((pTag) => (pTag !== undefined && pTag !== null && pTag !== ''));
+		}
 		return tmpOption;
+	}
+
+	/**
+	 * Resolve one EntityTags spec to a chip string. A spec is either a field name (`'ISBN'` → the raw
+	 * value) or an object `{ Field, Label, Template }`: `Template` renders against the whole record;
+	 * `Label` prefixes the value (`"Year: 2000"`) — useful when several numeric chips would be ambiguous.
+	 *
+	 * @param {string|Record<string, any>} pSpec @param {any} pRecord
+	 * @return {any}
+	 */
+	_composeTagValue(pSpec, pRecord)
+	{
+		if (typeof pSpec === 'string')
+		{
+			return pRecord[pSpec];
+		}
+		if (pSpec && typeof pSpec === 'object')
+		{
+			let tmpValue = pSpec.Template ? this.pict.parseTemplate(pSpec.Template, pRecord) : pRecord[pSpec.Field];
+			if (tmpValue === undefined || tmpValue === null || tmpValue === '') { return ''; }
+			return pSpec.Label ? `${pSpec.Label}: ${tmpValue}` : tmpValue;
+		}
+		return '';
 	}
 
 	/**
@@ -389,6 +425,7 @@ class PictProviderPicker extends libPictProvider
 		const tmpMapRecord = (typeof pConfig.MapRecord === 'function') ? pConfig.MapRecord : false;
 		const tmpJoinConfig = this._resolveJoinConfig(pConfig);
 		const tmpEntityTagField = pConfig.EntityTag || false;
+		const tmpEntityTagFields = Array.isArray(pConfig.EntityTags) ? pConfig.EntityTags : false;
 		const tmpTextTemplate = pConfig.TextTemplate || false;
 
 		return (pValue) => new Promise((resolve) =>
@@ -404,7 +441,7 @@ class PictProviderPicker extends libPictProvider
 					const fFinish = () =>
 					{
 						if (tmpMapRecord) { return resolve(tmpMapRecord(pRecord)); }
-						return resolve(this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate));
+						return resolve(this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
 					};
 					// JoinEntity: resolve the single joined record (cached getEntity) for the compound label.
 					const tmpFK = tmpJoinConfig ? pRecord[tmpJoinConfig.FKColumn] : null;

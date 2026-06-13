@@ -291,7 +291,7 @@ class PictViewPicker extends libPictView
 				{
 					if (this._isMulti())
 					{
-						this._selectedRecords[String(pValue)] = { Value: pResolved.Value !== undefined ? pResolved.Value : pValue, Text: pResolved.Text, Tag: pResolved.Tag };
+						this._selectedRecords[String(pValue)] = { Value: pResolved.Value !== undefined ? pResolved.Value : pValue, Text: pResolved.Text, Tag: pResolved.Tag, Tags: pResolved.Tags };
 						this._renderValue();
 					}
 					else
@@ -410,7 +410,7 @@ class PictViewPicker extends libPictView
 			const tmpRow = this._sourceRows().find((pRow) => String(pRow.Value) === String(pVal));
 			if (tmpRow)
 			{
-				this._selectedRecords[String(pVal)] = { Value: tmpRow.Value, Text: tmpRow.Text, Tag: tmpRow.Tag };
+				this._selectedRecords[String(pVal)] = { Value: tmpRow.Value, Text: tmpRow.Text, Tag: tmpRow.Tag, Tags: tmpRow.Tags };
 				return;
 			}
 			if (this._isAsync() && typeof this.options.ResolveValue === 'function')
@@ -419,7 +419,7 @@ class PictViewPicker extends libPictView
 				{
 					if (pResolved && pResolved.Text)
 					{
-						this._selectedRecords[String(pVal)] = { Value: pResolved.Value !== undefined ? pResolved.Value : pVal, Text: pResolved.Text, Tag: pResolved.Tag };
+						this._selectedRecords[String(pVal)] = { Value: pResolved.Value !== undefined ? pResolved.Value : pVal, Text: pResolved.Text, Tag: pResolved.Tag, Tags: pResolved.Tags };
 						if (!this._isMulti()) { this._selectedText = pResolved.Text; }
 						this._renderValue();
 					}
@@ -436,19 +436,38 @@ class PictViewPicker extends libPictView
 	}
 
 	/**
-	 * Build the EntityTag before/after render slots for a record. Exactly one slot is populated (per the
-	 * TagLast option) and only when a tag value is present, so a tag-less row renders no badge.
-	 * @param {any} pTag @param {boolean} pTagLast
+	 * Build the EntityTag before/after render slots for a record. Accepts a single tag value OR an array
+	 * of them (the `Tags` multi-badge form), so a record can carry several disambiguation chips (e.g. a
+	 * book's ISBN + year). Empty/blank entries are dropped; a tag-less record renders no badge. The slot
+	 * is a per-tag `{Tag}` array, and the value/chip/option templates already iterate it with `{~TS:~}`.
+	 * @param {any} pTags - a tag value, or an array of tag values.
+	 * @param {boolean} pTagLast
 	 * @return {{TagBeforeSlot:Array<any>, TagAfterSlot:Array<any>}}
 	 */
-	_tagSlots(pTag, pTagLast)
+	_tagSlots(pTags, pTagLast)
 	{
-		const tmpHasTag = (pTag !== undefined && pTag !== null && pTag !== '');
-		const tmpSlot = tmpHasTag ? [ { Tag: pTag } ] : [];
+		const tmpList = Array.isArray(pTags)
+			? pTags
+			: ((pTags !== undefined && pTags !== null && pTags !== '') ? [ pTags ] : []);
+		const tmpSlot = tmpList
+			.filter((pTag) => (pTag !== undefined && pTag !== null && pTag !== ''))
+			.map((pTag) => ({ Tag: pTag }));
 		return {
-			TagBeforeSlot: (tmpHasTag && !pTagLast) ? tmpSlot : [],
-			TagAfterSlot: (tmpHasTag && pTagLast) ? tmpSlot : [],
+			TagBeforeSlot: (tmpSlot.length > 0 && !pTagLast) ? tmpSlot : [],
+			TagAfterSlot: (tmpSlot.length > 0 && pTagLast) ? tmpSlot : [],
 		};
+	}
+
+	/**
+	 * The tag(s) to render for a record — the multi-badge `Tags` array when present, else the single
+	 * `Tag` (back-compat). Centralizes the precedence used by every `_tagSlots` call site.
+	 * @param {any} pRecord
+	 * @return {any}
+	 */
+	_recordTags(pRecord)
+	{
+		if (!pRecord) { return undefined; }
+		return (pRecord.Tags !== undefined) ? pRecord.Tags : pRecord.Tag;
 	}
 
 	/**
@@ -485,7 +504,7 @@ class PictViewPicker extends libPictView
 				Selected: tmpIsSelected,
 				NotSelected: !tmpIsSelected,
 				Highlight: (pIndex === this._highlight),
-			}, this._tagSlots(pOption.Tag, tmpTagLast));
+			}, this._tagSlots(this._recordTags(pOption), tmpTagLast));
 		});
 
 		// Cluster options into categories (preserving order), keyed by each source row's optional Group.
@@ -542,7 +561,7 @@ class PictViewPicker extends libPictView
 				const tmpRecord = this._lookupRecord(pVal);
 				return Object.assign(
 					{ PickerHash: this.options.PickerHash, ValueKey: String(pVal), Text: tmpRecord ? tmpRecord.Text : String(pVal) },
-					this._tagSlots(tmpRecord ? tmpRecord.Tag : undefined, tmpTagLast));
+					this._tagSlots(this._recordTags(tmpRecord), tmpTagLast));
 			});
 			tmpState.SingleSlot = [];
 			tmpState.MultiSlot = [ {
@@ -560,7 +579,7 @@ class PictViewPicker extends libPictView
 				PickerHash: this.options.PickerHash,
 				DisplayText: tmpSelected ? tmpSelected.Text : (this._selectedText || (tmpHasValue ? String(tmpValue) : this.options.Placeholder)),
 				NoValue: !tmpHasValue,
-			}, this._tagSlots(tmpSelected ? tmpSelected.Tag : undefined, tmpTagLast)) ];
+			}, this._tagSlots(this._recordTags(tmpSelected), tmpTagLast)) ];
 			tmpState.MultiSlot = [];
 		}
 		return tmpState;
@@ -800,7 +819,7 @@ class PictViewPicker extends libPictView
 		if (!this._isMulti())
 		{
 			this._selectedText = tmpOption.Text;
-			this._selectedRecords[String(tmpOption.Value)] = { Value: tmpOption.Value, Text: tmpOption.Text, Tag: tmpOption.Tag };
+			this._selectedRecords[String(tmpOption.Value)] = { Value: tmpOption.Value, Text: tmpOption.Text, Tag: tmpOption.Tag, Tags: tmpOption.Tags };
 			this._setValue(tmpOption.Value);
 			this._search = '';
 			this._open = false;
@@ -824,7 +843,7 @@ class PictViewPicker extends libPictView
 		else
 		{
 			tmpValues.push(tmpOption.Value);
-			this._selectedRecords[String(pValueKey)] = { Value: tmpOption.Value, Text: tmpOption.Text, Tag: tmpOption.Tag };
+			this._selectedRecords[String(pValueKey)] = { Value: tmpOption.Value, Text: tmpOption.Text, Tag: tmpOption.Tag, Tags: tmpOption.Tags };
 		}
 		this._setValue(tmpValues);
 		this._renderValue();

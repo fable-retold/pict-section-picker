@@ -1,6 +1,6 @@
 {
 	"name": "pict-section-picker",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"description": "Pict-native themeable searchable select / combobox — single & multi select, server pagination, categorized groups and creatable entries, driven by a host-agnostic async DataProvider (with a built-in Meadow EntityProvider adapter). A jQuery/select2-free replacement.",
 	"main": "source/Pict-Section-Picker.js",
 	"types": "types/Pict-Section-Picker.d.ts",

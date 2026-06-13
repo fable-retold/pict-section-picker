@@ -168,10 +168,27 @@ tmpPicker.createEntityPicker('PayItemPicker',
 
 Static options can carry a `Tag` directly (`{ Value, Text, Tag }`). The badge rides on the dropdown options, the selected single value, and multi-select chips alike. It composes with JoinEntity — the join folds into the label, the tag stays a separate pill.
 
+**Multiple badges (`EntityTags`).** For several disambiguation chips per option (e.g. a book's `ISBN` *and* publication year), pass `EntityTags` — an array of field specs:
+
+```javascript
+tmpPicker.createEntityPicker('BookPicker',
+{
+    Entity: 'Book',
+    SearchFields: [ 'Title', 'ISBN' ],
+    EntityTags: [ 'ISBN', { Field: 'PublicationYear', Label: 'Year' } ],  // -> [1416524797] [Year: 2000]
+    TagLast: true,                // chips after the title:  The Da Vinci Code  1416524797  Year: 2000
+    DestinationAddress: '#BookPicker',
+    ValueAddress: 'AppData.Form.IDBook',
+});
+```
+
+Each spec is a field name (raw value) or `{ Field, Label?, Template? }` — `Label` prefixes the value (`"Year: 2000"`); `Template` renders against the whole record. Options carry the results as a `Tags` array (static options can set `Tags` directly); it composes with the single `Tag`. The recordset association UIs drive this from a per-side `ChipFields` config.
+
 | Option | Default | Purpose |
 |---|---|---|
-| `EntityTag` | — | (entity pickers) record field whose value becomes each option's `Tag` badge. |
-| `TagLast` | `false` | `false` → badge before the label; `true` → after. |
+| `EntityTag` | — | (entity pickers) record field whose value becomes each option's single `Tag` badge. |
+| `EntityTags` | — | (entity pickers) array of `string \| {Field, Label?, Template?}` specs → multiple chips (`Tags`). |
+| `TagLast` | `false` | `false` → badge(s) before the label; `true` → after. |
 
 Through the form-input adapter + the recordset entity filters these are `PictForm.EntityTag` / `PictForm.EntityTagLast`.
 
