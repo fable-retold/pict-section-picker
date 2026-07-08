@@ -44,6 +44,9 @@ declare class PictProviderPicker extends libPictProvider {
      *   - SearchFields {Array<string>} - fields to LIKE-search (default `['Name']`).
      *   - ValueField {string} - record field used as the option Value (default `ID<Entity>`).
      *   - TextField {string} - record field used as the option Text (default `Name`).
+     *   - TextTemplate {string} - optional pict template rendered against the whole record for the option
+     *       Text (overrides TextField; composes with JoinEntity). Lets a host show a composed, disambiguated
+     *       label, e.g. `{~DWTF:Record.NameFull:...~} ({~D:Record.Email~})`.
      *   - PageSize {number} - records per page (default 20).
      *   - Sort {string} - optional field to sort ascending (adds `FSF~<field>~ASC~0`).
      *   - BaseFilter {string|Array<string>|function} - optional always-applied FoxHound filter (AND),
@@ -65,6 +68,11 @@ declare class PictProviderPicker extends libPictProvider {
      *   - EntityTag {string} - optional record field whose value becomes a `Tag` badge on each option
      *     (e.g. a `LineItem`'s `ItemNumber`). The picker view renders it as a styled badge alongside the
      *     label (ordering via the picker's `TagLast` option). Composes with JoinEntity (tag is outermost).
+     *   - EntityTags {Array<string|{Field:string, Label?:string, Template?:string}>} - a SET of extra
+     *     fields rendered as multiple disambiguation chips (e.g. `['ISBN', { Field: 'PublicationYear',
+     *     Label: 'Year' }]`). A string spec shows the raw value; an object spec can prefix a `Label`
+     *     (`"Year: 2000"`) or render a `Template` against the whole record. Renders as `Tags` (an array)
+     *     alongside the optional single `Tag`.
      * @return {(pSearchTerm: string, pPage: number) => Promise<{results: Array<any>, hasMore: boolean}>}
      */
     createEntityDataProvider(pConfig: Record<string, any>): (pSearchTerm: string, pPage: number) => Promise<{
@@ -104,12 +112,21 @@ declare class PictProviderPicker extends libPictProvider {
      * @param {false | Record<string, any>} pJoinConfig @param {string|false} pTagField
      * @return {{Value:any, Text:any, Record:any, Tag?:any}}
      */
-    _composeOption(pRecord: any, pValueField: string, pTextField: string, pJoinConfig: false | Record<string, any>, pTagField: string | false): {
+    _composeOption(pRecord: any, pValueField: string, pTextField: string, pJoinConfig: false | Record<string, any>, pTagField: string | false, pTextTemplate: any, pTagFields: any): {
         Value: any;
         Text: any;
         Record: any;
         Tag?: any;
     };
+    /**
+     * Resolve one EntityTags spec to a chip string. A spec is either a field name (`'ISBN'` → the raw
+     * value) or an object `{ Field, Label, Template }`: `Template` renders against the whole record;
+     * `Label` prefixes the value (`"Year: 2000"`) — useful when several numeric chips would be ambiguous.
+     *
+     * @param {string|Record<string, any>} pSpec @param {any} pRecord
+     * @return {any}
+     */
+    _composeTagValue(pSpec: string | Record<string, any>, pRecord: any): any;
     /**
      * Fetch-then-merge the join entity for a page of searched records. Collects the unique FK ids the
      * rows carry (`JoinConfig.FKColumn`), issues ONE `FBL~{PKColumn}~INN~<ids>` request against the join

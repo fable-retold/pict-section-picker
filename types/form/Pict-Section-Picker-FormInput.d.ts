@@ -21,10 +21,12 @@ declare class PictInputTypePicker extends PictInputTypePicker_base {
         Mode: string;
         Placeholder: any;
         Searchable: boolean;
+        ReadOnly: boolean;
         Entity: any;
         SearchFields: any;
         ValueField: any;
         TextField: any;
+        TextTemplate: any;
         PageSize: any;
         Options: any;
         JoinEntity: any;

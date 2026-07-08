@@ -55,15 +55,25 @@ declare class PictViewPicker extends libPictView {
         Tag?: any;
     }>;
     /**
-     * Build the EntityTag before/after render slots for a record. Exactly one slot is populated (per the
-     * TagLast option) and only when a tag value is present, so a tag-less row renders no badge.
-     * @param {any} pTag @param {boolean} pTagLast
+     * Build the EntityTag before/after render slots for a record. Accepts a single tag value OR an array
+     * of them (the `Tags` multi-badge form), so a record can carry several disambiguation chips (e.g. a
+     * book's ISBN + year). Empty/blank entries are dropped; a tag-less record renders no badge. The slot
+     * is a per-tag `{Tag}` array, and the value/chip/option templates already iterate it with `{~TS:~}`.
+     * @param {any} pTags - a tag value, or an array of tag values.
+     * @param {boolean} pTagLast
      * @return {{TagBeforeSlot:Array<any>, TagAfterSlot:Array<any>}}
      */
-    _tagSlots(pTag: any, pTagLast: boolean): {
+    _tagSlots(pTags: any, pTagLast: boolean): {
         TagBeforeSlot: Array<any>;
         TagAfterSlot: Array<any>;
     };
+    /**
+     * The tag(s) to render for a record — the multi-badge `Tags` array when present, else the single
+     * `Tag` (back-compat). Centralizes the precedence used by every `_tagSlots` call site.
+     * @param {any} pRecord
+     * @return {any}
+     */
+    _recordTags(pRecord: any): any;
     /**
      * (Re)compute the picker's render state into AppData: the displayed value / chips + the
      * (search-filtered) option list with selected/highlight flags.
@@ -96,8 +106,27 @@ declare class PictViewPicker extends libPictView {
      * Position the (fixed) dropdown against the control, flipping above when there's more room there.
      * Because the popover is position:fixed (viewport-anchored), no ancestor overflow can clip it; the
      * trade-off is we set its top/left/width ourselves from the control's rect on open.
+     *
+     * A position:fixed element is only viewport-anchored when no ancestor establishes a containing
+     * block. An ancestor with a transform / perspective / filter (a modal centered with
+     * translate(-50%, -50%), a card with a drop-shadow filter, ...) becomes the containing block, and
+     * then top/left/bottom resolve against THAT box instead of the viewport -- the dropdown flies off
+     * toward a corner. So we detect such an ancestor and shift the viewport-space coordinates we compute
+     * into its space. With no such ancestor the offsets are zero and the math is identical to before.
+     * (The shift assumes the containing block is translated, not scaled -- the transforms that show up
+     * in practice here, modal centering and drop-shadows, translate but do not scale.)
      */
     _positionPop(): void;
+    /**
+     * The bounding rect of the nearest ancestor that establishes the containing block for this
+     * position:fixed popover -- an element with a transform, perspective, filter, backdrop-filter, or a
+     * will-change / contain that promotes one -- or null when the popover is anchored to the viewport as
+     * usual. Used by _positionPop() to convert viewport-space coordinates into that ancestor's space so
+     * the dropdown still lands against its control inside, for example, a transform-centered modal.
+     * @param {HTMLElement} pElement
+     * @return {DOMRect | null}
+     */
+    _fixedContainingBlockRect(pElement: HTMLElement): DOMRect | null;
     /** Async mode: load + append the next page of results. */
     loadMore(): void;
     /** Close the dropdown. */
@@ -119,6 +148,13 @@ declare class PictViewPicker extends libPictView {
      * @param {string} pValueKey - String(Value) of the option.
      */
     select(pValueKey: string): void;
+    /**
+     * Clearable (AllowClear, single mode): empty the selection — from the control's inline × or the
+     * pinned "Any" dropdown row. Closing mirrors select() (clearing IS a selection: "Any"), and
+     * OnChange(null, null) fires only when there was a value to clear, so clicking "Any" while
+     * already empty just closes the dropdown.
+     */
+    clearValue(): void;
     /** @return {Array<{Value:any, Text:string}>} The full record list for the current multi selection. */
     getSelectedRecords(): Array<{
         Value: any;

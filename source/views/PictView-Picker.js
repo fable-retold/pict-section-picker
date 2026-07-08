@@ -702,6 +702,15 @@ class PictViewPicker extends libPictView
 	 * Position the (fixed) dropdown against the control, flipping above when there's more room there.
 	 * Because the popover is position:fixed (viewport-anchored), no ancestor overflow can clip it; the
 	 * trade-off is we set its top/left/width ourselves from the control's rect on open.
+	 *
+	 * A position:fixed element is only viewport-anchored when no ancestor establishes a containing
+	 * block. An ancestor with a transform / perspective / filter (a modal centered with
+	 * translate(-50%, -50%), a card with a drop-shadow filter, ...) becomes the containing block, and
+	 * then top/left/bottom resolve against THAT box instead of the viewport -- the dropdown flies off
+	 * toward a corner. So we detect such an ancestor and shift the viewport-space coordinates we compute
+	 * into its space. With no such ancestor the offsets are zero and the math is identical to before.
+	 * (The shift assumes the containing block is translated, not scaled -- the transforms that show up
+	 * in practice here, modal centering and drop-shadows, translate but do not scale.)
 	 */
 	_positionPop()
 	{
@@ -716,9 +725,15 @@ class PictViewPicker extends libPictView
 		const tmpMargin = 8;
 		const tmpVH = window.innerHeight;
 		const tmpVW = window.innerWidth;
+		// When a transformed/filtered ancestor is the fixed containing block, our top/left/bottom are
+		// measured from its box, not the viewport; these offsets translate viewport coords into its space.
+		const tmpBlock = this._fixedContainingBlockRect(tmpPop);
+		const tmpOffsetLeft = tmpBlock ? tmpBlock.left : 0;
+		const tmpOffsetTop = tmpBlock ? tmpBlock.top : 0;
+		const tmpBlockBottom = tmpBlock ? tmpBlock.bottom : tmpVH;
 		const tmpWidth = Math.max(200, Math.round(tmpRect.width));
 		tmpPop.style.width = `${tmpWidth}px`;
-		tmpPop.style.left = `${Math.round(Math.max(tmpMargin, Math.min(tmpRect.left, tmpVW - tmpWidth - tmpMargin)))}px`;
+		tmpPop.style.left = `${Math.round(Math.max(tmpMargin, Math.min(tmpRect.left, tmpVW - tmpWidth - tmpMargin)) - tmpOffsetLeft)}px`;
 		tmpPop.style.right = 'auto';
 		const tmpSpaceBelow = tmpVH - tmpRect.bottom - tmpGap - tmpMargin;
 		const tmpSpaceAbove = tmpRect.top - tmpGap - tmpMargin;
@@ -732,16 +747,47 @@ class PictViewPicker extends libPictView
 		// "dropdown runs past the fold and you can't scroll to the bottom" bug near the bottom of a screen.
 		if ((tmpSpaceBelow >= tmpIdeal) || (tmpSpaceBelow >= tmpSpaceAbove))
 		{
-			tmpPop.style.top = `${Math.round(tmpRect.bottom + tmpGap)}px`;
+			tmpPop.style.top = `${Math.round(tmpRect.bottom + tmpGap - tmpOffsetTop)}px`;
 			tmpPop.style.bottom = 'auto';
 			if (tmpPanel) { tmpPanel.style.maxHeight = `${Math.max(0, Math.round(Math.min(tmpSpaceBelow, tmpIdeal)))}px`; }
 		}
 		else
 		{
 			tmpPop.style.top = 'auto';
-			tmpPop.style.bottom = `${Math.round(tmpVH - tmpRect.top + tmpGap)}px`;
+			tmpPop.style.bottom = `${Math.round(tmpBlockBottom - tmpRect.top + tmpGap)}px`;
 			if (tmpPanel) { tmpPanel.style.maxHeight = `${Math.max(0, Math.round(Math.min(tmpSpaceAbove, tmpIdeal)))}px`; }
 		}
+	}
+
+	/**
+	 * The bounding rect of the nearest ancestor that establishes the containing block for this
+	 * position:fixed popover -- an element with a transform, perspective, filter, backdrop-filter, or a
+	 * will-change / contain that promotes one -- or null when the popover is anchored to the viewport as
+	 * usual. Used by _positionPop() to convert viewport-space coordinates into that ancestor's space so
+	 * the dropdown still lands against its control inside, for example, a transform-centered modal.
+	 * @param {HTMLElement} pElement
+	 * @return {DOMRect | null}
+	 */
+	_fixedContainingBlockRect(pElement)
+	{
+		if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') { return null; }
+		let tmpNode = pElement ? pElement.parentElement : null;
+		while (tmpNode && tmpNode.nodeType === 1)
+		{
+			const tmpStyle = window.getComputedStyle(tmpNode);
+			if (tmpStyle
+				&& ((tmpStyle.transform && tmpStyle.transform !== 'none')
+					|| (tmpStyle.perspective && tmpStyle.perspective !== 'none')
+					|| (tmpStyle.filter && tmpStyle.filter !== 'none')
+					|| (tmpStyle.backdropFilter && tmpStyle.backdropFilter !== 'none')
+					|| (tmpStyle.willChange && /transform|perspective|filter/.test(tmpStyle.willChange))
+					|| (tmpStyle.contain && /(^|\s)(strict|content|paint|layout)(\s|$)/.test(tmpStyle.contain))))
+			{
+				return tmpNode.getBoundingClientRect();
+			}
+			tmpNode = tmpNode.parentElement;
+		}
+		return null;
 	}
 
 	/** Async mode: load + append the next page of results. */
