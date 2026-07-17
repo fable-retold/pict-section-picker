@@ -1,5 +1,9 @@
 const libPictView = require('pict-view');
 
+// The most recently opened picker (module-level bookkeeping). With the opt-in SingleActivePicker
+// option, opening a picker closes this sibling instead of stacking dropdowns (select2 parity).
+let _CurrentOpenPicker = null;
+
 /** @type {Record<string, any>} */
 const _DEFAULT_CONFIGURATION =
 {
@@ -48,6 +52,11 @@ const _DEFAULT_CONFIGURATION =
 	// When true, render the resolved selection as plain, non-interactive text (no dropdown / chevron /
 	// clear) — for read-only form views. The host sets PictForm.ReadOnly; the form-input passes it through.
 	ReadOnly: false,
+
+	// Opt-in: opening this picker closes any other open picker (at most one dropdown on the page —
+	// select2-style). Off by default so hosts that tolerate stacked dropdowns see no behavior change;
+	// usually enabled fleet-wide via the provider's SingleActivePicker option (createPicker seeds it).
+	SingleActivePicker: false,
 
 	Templates:
 	[
@@ -256,6 +265,9 @@ class PictViewPicker extends libPictView
 		this._loaded = false;
 		this._searchTimer = null;
 		this._selectedText = null;
+		// While-open viewport listeners (scroll/resize re-anchor the fixed dropdown to its control).
+		this._fReposition = null;
+		this._repositionFrame = null;
 		// Multi-mode state: the authoritative {Value,Text} for each selected value, keyed by String(Value),
 		// so a chip keeps its label even after the search results that produced it have scrolled away.
 		this._values = [];
@@ -686,16 +698,62 @@ class PictViewPicker extends libPictView
 		}
 	}
 
-	/** Open the dropdown and focus the search box. */
+	/** Open the dropdown and focus the search box. With the opt-in SingleActivePicker option, closes
+	 *  any open sibling picker first — one active dropdown per page. */
 	open()
 	{
+		if (this.options.SingleActivePicker && _CurrentOpenPicker && _CurrentOpenPicker !== this) { _CurrentOpenPicker.close(); }
+		_CurrentOpenPicker = this;
 		this._open = true;
 		this._highlight = -1;
 		this._paintOpen();
 		this._positionPop();
+		this._bindRepositionListeners();
 		if (this._isAsync() && !this._loaded) { this._loadPage(0, false); }
 		const tmpSearch = /** @type {HTMLInputElement} */ (document.getElementById(`PPS_Search_${this.options.PickerHash}`));
 		if (tmpSearch) { tmpSearch.focus(); tmpSearch.select(); }
+	}
+
+	/**
+	 * Bind the while-open viewport listeners: scrolling (any ancestor scroll pane — hence capture
+	 * phase) or resizing moves the control while the position:fixed dropdown stays put, so both
+	 * re-run _positionPop() to keep the panel anchored to its control. Throttled to animation frames.
+	 */
+	_bindRepositionListeners()
+	{
+		if (typeof window === 'undefined' || this._fReposition) { return; }
+		this._fReposition = () =>
+		{
+			if (!this._open || this._repositionFrame) { return; }
+			const fApply = () => { this._repositionFrame = null; if (this._open) { this._positionPop(); } };
+			if (typeof window.requestAnimationFrame === 'function') { this._repositionFrame = window.requestAnimationFrame(fApply); }
+			else { fApply(); }
+		};
+		window.addEventListener('scroll', this._fReposition, true);
+		window.addEventListener('resize', this._fReposition);
+	}
+
+	/** Release the while-open viewport listeners (every close path funnels through _markClosed). */
+	_unbindRepositionListeners()
+	{
+		if (typeof window === 'undefined' || !this._fReposition) { return; }
+		window.removeEventListener('scroll', this._fReposition, true);
+		window.removeEventListener('resize', this._fReposition);
+		this._fReposition = null;
+	}
+
+	/**
+	 * Mark the dropdown closed: the transient open state, the module-level active-picker slot, and the
+	 * while-open viewport listeners. Shared by every path that closes the dropdown (close(), a
+	 * single-mode select, clearValue, createFromSearch) so none of them can leak a listener or leave a
+	 * stale active-picker reference.
+	 */
+	_markClosed()
+	{
+		this._open = false;
+		this._highlight = -1;
+		if (_CurrentOpenPicker === this) { _CurrentOpenPicker = null; }
+		this._unbindRepositionListeners();
 	}
 
 	/**
@@ -802,9 +860,27 @@ class PictViewPicker extends libPictView
 	/** Close the dropdown. */
 	close()
 	{
-		this._open = false;
-		this._highlight = -1;
+		this._markClosed();
 		this._paintOpen();
+	}
+
+	/**
+	 * Async mode: invalidate the loaded results and re-query the DataProvider. The public hook for a
+	 * host whose CONTEXTUAL scope changed outside the picker (a "Show All" toggle, a dependent field
+	 * pick, …) — the accumulated pages no longer reflect the filters, so drop them; an open dropdown
+	 * re-queries immediately, a closed one on its next open. No-op for static Options pickers (their
+	 * list is filtered live, nothing is cached).
+	 * @return {PictViewPicker} this
+	 */
+	reload()
+	{
+		if (!this._isAsync()) { return this; }
+		this._loaded = false;
+		this._loadedResults = [];
+		this._page = 0;
+		this._hasMore = false;
+		if (this._open) { this._loadPage(0, false); }
+		return this;
 	}
 
 	/** Reflect the open/closed state on the widget container. */
@@ -899,8 +975,7 @@ class PictViewPicker extends libPictView
 			this._selectedRecords[String(tmpOption.Value)] = { Value: tmpOption.Value, Text: tmpOption.Text, Tag: tmpOption.Tag, Tags: tmpOption.Tags };
 			this._setValue(tmpOption.Value);
 			this._search = '';
-			this._open = false;
-			this._highlight = -1;
+			this._markClosed();
 			this.render();
 			if (typeof this.options.OnChange === 'function')
 			{
@@ -947,8 +1022,7 @@ class PictViewPicker extends libPictView
 		this._selectedText = null;
 		this._setValue(null);
 		this._search = '';
-		this._open = false;
-		this._highlight = -1;
+		this._markClosed();
 		this.render();
 		if (tmpHadValue && typeof this.options.OnChange === 'function')
 		{
@@ -1003,8 +1077,7 @@ class PictViewPicker extends libPictView
 				this._selectedText = pRecord.Text;
 				this._setValue(pRecord.Value);
 				this._search = '';
-				this._open = false;
-				this._highlight = -1;
+				this._markClosed();
 				this.render();
 				if (typeof this.options.OnChange === 'function') { this.options.OnChange(pRecord.Value, pRecord); }
 			}
@@ -1035,6 +1108,12 @@ class PictViewPicker extends libPictView
 	{
 		if (this.pict.CSSMap && typeof this.pict.CSSMap.injectCSS === 'function') { this.pict.CSSMap.injectCSS(); }
 		this._paintOpen();
+		// Re-anchor the dropdown when we re-render WHILE open. The pop is position:fixed with no CSS default
+		// offset — its top/left/width live only as inline styles set by _positionPop() from open(). A full
+		// render (RenderMethod 'replace', e.g. a host form re-marshalling after a multi-select committed its
+		// value) wipes those inline styles, so without this the now-visible fixed panel falls back to the
+		// unpositioned viewport corner. Re-running _positionPop() keeps it pinned to its control.
+		if (this._open) { this._positionPop(); }
 		return super.onAfterRender(pRenderable);
 	}
 }

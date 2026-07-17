@@ -107,6 +107,11 @@ const _DEFAULT_CONFIGURATION =
 
 	AutoInitialize: true,
 	AutoInitializeOrdinal: 0,
+
+	// Opt-in fleet default: when true, every picker this provider creates closes any open sibling on
+	// open (at most one dropdown on the page — select2 parity). Off by default so existing hosts see
+	// no behavior change; a per-picker SingleActivePicker in createPicker's config overrides it.
+	SingleActivePicker: false,
 };
 
 /**
@@ -139,6 +144,8 @@ class PictProviderPicker extends libPictProvider
 	 *   - Searchable {boolean} - show the search box (default true).
 	 *   - Options {Array<{Value:any, Text:string}>} - static option list.
 	 *   - OnChange {function} - optional callback invoked with the new value after a selection.
+	 *   - SingleActivePicker {boolean} - opt-in: opening this picker closes any open sibling
+	 *     (defaults from the provider's own SingleActivePicker option).
 	 * @return {any} The picker view instance.
 	 */
 	createPicker(pPickerHash, pConfig)
@@ -150,6 +157,8 @@ class PictProviderPicker extends libPictProvider
 				Searchable: true,
 				Placeholder: 'Select…',
 				Options: [],
+				// Seed the provider-level fleet default; an explicit per-picker value overrides it.
+				SingleActivePicker: !!this.options.SingleActivePicker,
 			},
 			pConfig || {},
 			{ PickerHash: pPickerHash });
@@ -200,10 +209,16 @@ class PictProviderPicker extends libPictProvider
 	 *       label, e.g. `{~DWTF:Record.NameFull:...~} ({~D:Record.Email~})`.
 	 *   - PageSize {number} - records per page (default 20).
 	 *   - Sort {string} - optional field to sort ascending (adds `FSF~<field>~ASC~0`).
-	 *   - BaseFilter {string|Array<string>|function} - optional always-applied FoxHound filter (AND),
-	 *     e.g. `FBV~IDCustomer~EQ~1`. May be a **function** `(searchTerm, page) => string|string[]`
+	 *   - BaseFilter {string|Array<string>|Object|function} - optional always-applied FoxHound filter
+	 *     (AND), e.g. `FBV~IDCustomer~EQ~1`. May be a **function** `(searchTerm, page) => string|string[]|Object`
 	 *     evaluated on every search — the generic hook for host-injected CONTEXTUAL scoping (project,
 	 *     tenant, spec-year, …). The module stays agnostic; the host supplies the closure.
+	 *     The object form `{ Filters, BackOffFilters }` (each a string or array of stanzas) splits the
+	 *     scope into a MANDATORY set and a BACK-OFF set: both are applied together first, and when the
+	 *     first page of a search comes back EMPTY the request is retried once WITHOUT the back-off set —
+	 *     so a host can narrow aggressively ("this project's items") yet auto-widen instead of showing
+	 *     "No matches" when the narrow scope has none. Later pages of the same search stay widened so
+	 *     "Load more" pages the set the user is actually looking at.
 	 *   - MapRecord {function} - optional `(record) => {Value, Text}` mapper (overrides Value/TextField).
 	 *   - JoinEntity {string} - optional second entity to JOIN for a compound display (e.g. a `LineItem`
 	 *     shown with its `Project`). Each searched row must carry the FK (`JoinField`). Because Meadow
@@ -241,6 +256,12 @@ class PictProviderPicker extends libPictProvider
 		const tmpEntityTagFields = Array.isArray(pConfig.EntityTags) ? pConfig.EntityTags : false;
 		const tmpTextTemplate = pConfig.TextTemplate || false;
 
+		// Back-off state (per data-provider, i.e. per picker): once a page-0 search came back empty and
+		// was retried without the back-off set, later pages of the SAME term stay widened so "Load more"
+		// pages the widened set the user is actually looking at. A new page-0 search resets it.
+		let tmpBackOffDropped = false;
+		let tmpBackOffDroppedTerm = null;
+
 		return (pSearchTerm, pPage) => new Promise((resolve, reject) =>
 		{
 			if (!this.pict.EntityProvider || typeof this.pict.EntityProvider.getEntitySetPage !== 'function')
@@ -250,39 +271,87 @@ class PictProviderPicker extends libPictProvider
 
 			// Resolve the base filter at SEARCH time. A function form lets the host inject contextual
 			// scoping (e.g. "only this project's line items") without the module knowing the context;
-			// it can return a single stanza, an array of stanzas, or nothing.
+			// it can return a single stanza, an array of stanzas, a `{ Filters, BackOffFilters }` split,
+			// or nothing.
 			let tmpBaseFilter = tmpBaseFilterConfig;
 			if (typeof tmpBaseFilterConfig === 'function')
 			{
 				try { tmpBaseFilter = tmpBaseFilterConfig(pSearchTerm, pPage); }
 				catch (pScopeError) { this.pict.log.warn(`Pict-Section-Picker [${tmpEntity}] BaseFilter() threw; ignoring contextual scope.`, pScopeError); tmpBaseFilter = ''; }
 			}
-			if (Array.isArray(tmpBaseFilter)) { tmpBaseFilter = tmpBaseFilter.filter(Boolean).join('~'); }
+			const tmpScope = this._normalizeBaseFilter(tmpBaseFilter);
 
-			const tmpStanzas = [];
-			if (tmpBaseFilter) { tmpStanzas.push(tmpBaseFilter); }
-			if (pSearchTerm) { tmpStanzas.push(this.buildSearchFilter(tmpSearchFields, pSearchTerm)); }
-			if (tmpSort) { tmpStanzas.push(`FSF~${tmpSort}~ASC~0`); }
-			const tmpFilter = tmpStanzas.filter(Boolean).join('~');
+			const tmpPageIndex = (pPage || 0);
+			if (tmpPageIndex === 0) { tmpBackOffDropped = false; tmpBackOffDroppedTerm = null; }
+			const tmpCarryWidened = tmpBackOffDropped && (tmpBackOffDroppedTerm === (pSearchTerm || ''));
+			const tmpApplyBackOff = !!tmpScope.BackOffFilter && !tmpCarryWidened;
 
-			const tmpCursor = (pPage || 0) * tmpPageSize;
-			this.pict.EntityProvider.getEntitySetPage(tmpEntity, tmpFilter, tmpCursor, tmpPageSize,
+			const fComposeFilter = (pIncludeBackOff) =>
+			{
+				const tmpStanzas = [];
+				if (tmpScope.Filter) { tmpStanzas.push(tmpScope.Filter); }
+				if (pIncludeBackOff && tmpScope.BackOffFilter) { tmpStanzas.push(tmpScope.BackOffFilter); }
+				if (pSearchTerm) { tmpStanzas.push(this.buildSearchFilter(tmpSearchFields, pSearchTerm)); }
+				if (tmpSort) { tmpStanzas.push(`FSF~${tmpSort}~ASC~0`); }
+				return tmpStanzas.filter(Boolean).join('~');
+			};
+
+			const fFinish = (pRecords) =>
+			{
+				const tmpList = Array.isArray(pRecords) ? pRecords : [];
+				// JoinEntity (when configured): one INN fetch for the joined rows, stitched onto each
+				// searched row, before mapping — so the option Text can show the compound display.
+				this._decorateRecordsWithJoin(tmpList, tmpJoinConfig).then((pDecorated) =>
+				{
+					const tmpResults = pDecorated.map((pRecord) => tmpMapRecord
+						? tmpMapRecord(pRecord)
+						: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
+					// hasMore: a full page came back, so there is (probably) another. Avoids a Count round-trip.
+					return resolve({ results: tmpResults, hasMore: (tmpList.length >= tmpPageSize) });
+				});
+			};
+
+			const tmpCursor = tmpPageIndex * tmpPageSize;
+			this.pict.EntityProvider.getEntitySetPage(tmpEntity, fComposeFilter(tmpApplyBackOff), tmpCursor, tmpPageSize,
 				(pError, pRecords) =>
 				{
 					if (pError) { return reject(pError); }
 					const tmpList = Array.isArray(pRecords) ? pRecords : [];
-					// JoinEntity (when configured): one INN fetch for the joined rows, stitched onto each
-					// searched row, before mapping — so the option Text can show the compound display.
-					this._decorateRecordsWithJoin(tmpList, tmpJoinConfig).then((pDecorated) =>
+					// Back-off retry: an EMPTY first page under the back-off set means the narrow scope has
+					// nothing — auto-widen by retrying once without it, instead of stranding the user on
+					// "No matches" for options that exist just outside the preferred scope.
+					if (tmpList.length < 1 && tmpApplyBackOff && tmpPageIndex === 0)
 					{
-						const tmpResults = pDecorated.map((pRecord) => tmpMapRecord
-							? tmpMapRecord(pRecord)
-							: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
-						// hasMore: a full page came back, so there is (probably) another. Avoids a Count round-trip.
-						return resolve({ results: tmpResults, hasMore: (tmpList.length >= tmpPageSize) });
-					});
+						tmpBackOffDropped = true;
+						tmpBackOffDroppedTerm = (pSearchTerm || '');
+						return this.pict.EntityProvider.getEntitySetPage(tmpEntity, fComposeFilter(false), tmpCursor, tmpPageSize,
+							(pRetryError, pRetryRecords) =>
+							{
+								if (pRetryError) { return reject(pRetryError); }
+								return fFinish(pRetryRecords);
+							});
+					}
+					return fFinish(tmpList);
 				});
 		});
+	}
+
+	/**
+	 * Normalize a resolved BaseFilter value into `{ Filter, BackOffFilter }` joined-stanza strings.
+	 * Accepts the historical string / array forms (all-mandatory, no back-off) and the object form
+	 * `{ Filters, BackOffFilters }` where each side is itself a string or array of stanzas.
+	 *
+	 * @param {any} pResolved - The BaseFilter config value, or a BaseFilter function's return value.
+	 * @return {{Filter: string, BackOffFilter: string}}
+	 */
+	_normalizeBaseFilter(pResolved)
+	{
+		const fJoin = (pValue) => Array.isArray(pValue) ? pValue.filter(Boolean).join('~') : (pValue || '');
+		if (pResolved && typeof pResolved === 'object' && !Array.isArray(pResolved))
+		{
+			return { Filter: fJoin(pResolved.Filters), BackOffFilter: fJoin(pResolved.BackOffFilters) };
+		}
+		return { Filter: fJoin(pResolved), BackOffFilter: '' };
 	}
 
 	/**

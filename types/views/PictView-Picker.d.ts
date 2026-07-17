@@ -12,6 +12,8 @@ declare class PictViewPicker extends libPictView {
     _loaded: boolean;
     _searchTimer: NodeJS.Timeout;
     _selectedText: any;
+    _fReposition: () => void;
+    _repositionFrame: number;
     _values: any[];
     _selectedRecords: {};
     /** @return {boolean} True when a DataProvider function is configured (async/server mode). */
@@ -100,8 +102,24 @@ declare class PictViewPicker extends libPictView {
     toggle(pEvent: any): void;
     /** Keyboard on the control: open the dropdown on Enter / Space / ArrowDown. */
     onControlKey(pEvent: any): void;
-    /** Open the dropdown and focus the search box. */
+    /** Open the dropdown and focus the search box. With the opt-in SingleActivePicker option, closes
+     *  any open sibling picker first — one active dropdown per page. */
     open(): void;
+    /**
+     * Bind the while-open viewport listeners: scrolling (any ancestor scroll pane — hence capture
+     * phase) or resizing moves the control while the position:fixed dropdown stays put, so both
+     * re-run _positionPop() to keep the panel anchored to its control. Throttled to animation frames.
+     */
+    _bindRepositionListeners(): void;
+    /** Release the while-open viewport listeners (every close path funnels through _markClosed). */
+    _unbindRepositionListeners(): void;
+    /**
+     * Mark the dropdown closed: the transient open state, the module-level active-picker slot, and the
+     * while-open viewport listeners. Shared by every path that closes the dropdown (close(), a
+     * single-mode select, clearValue, createFromSearch) so none of them can leak a listener or leave a
+     * stale active-picker reference.
+     */
+    _markClosed(): void;
     /**
      * Position the (fixed) dropdown against the control, flipping above when there's more room there.
      * Because the popover is position:fixed (viewport-anchored), no ancestor overflow can clip it; the
@@ -131,6 +149,15 @@ declare class PictViewPicker extends libPictView {
     loadMore(): void;
     /** Close the dropdown. */
     close(): void;
+    /**
+     * Async mode: invalidate the loaded results and re-query the DataProvider. The public hook for a
+     * host whose CONTEXTUAL scope changed outside the picker (a "Show All" toggle, a dependent field
+     * pick, …) — the accumulated pages no longer reflect the filters, so drop them; an open dropdown
+     * re-queries immediately, a closed one on its next open. No-op for static Options pickers (their
+     * list is filtered live, nothing is cached).
+     * @return {PictViewPicker} this
+     */
+    reload(): PictViewPicker;
     /** Reflect the open/closed state on the widget container. */
     _paintOpen(): void;
     /** Re-render only the option list (keeps the search input + its focus intact). */

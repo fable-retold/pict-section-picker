@@ -114,8 +114,21 @@ Entity-source configuration:
 | `TextField` | `'Name'` | Record field used as the option `Text`. |
 | `PageSize` | `20` | Records per page. |
 | `Sort` | — | Field to sort ascending (`FSF~<field>~ASC~0`). |
-| `BaseFilter` | — | An always-applied FoxHound filter (AND), e.g. `FBV~IDCustomer~EQ~1`. |
+| `BaseFilter` | — | An always-applied FoxHound filter (AND), e.g. `FBV~IDCustomer~EQ~1`. A string, an array of stanzas, a `{ Filters, BackOffFilters }` split (see below), or a **function** `(term, page)` returning any of those — re-evaluated on every search, the hook for host-injected contextual scoping. |
 | `MapRecord` | — | `(record) => {Value, Text}` mapper, overriding `Value`/`TextField`. |
+
+### Back-off filters (auto-widen on empty)
+
+`BaseFilter`'s object form splits the scope into a **mandatory** set and a **preferred (back-off)** set:
+
+```javascript
+BaseFilter: () => ({
+    Filters: [ 'FBV~IDProject~EQ~10' ],            // always applied
+    BackOffFilters: [ 'FBL~IDMaterial~INN~1,2,3' ], // preferred narrowing
+})
+```
+
+Both sets apply together first. When the **first page** of a search comes back **empty**, the request is retried once **without** the back-off set — so a host can narrow aggressively ("this project's materials") yet auto-widen instead of showing "No matches" when the preferred scope has nothing. Later pages of the same search stay widened, so "Load more" pages the set the user is actually looking at; the next fresh search re-applies the back-off set.
 
 The lower-level builders are also exposed: `createEntityDataProvider(cfg)` and `createEntityResolveValue(cfg)` return the raw functions if you want to wire them yourself.
 
@@ -236,6 +249,7 @@ OnCreate: (pTerm) =>
 | `SelectedValuesAddress` | — | (multi) mirror the selection as a record array. |
 | `OnCreate` | — | `(term) => {Value, Text}` to enable creatable entries. |
 | `OnChange` | — | Called after a selection: single → `(value, record)`, multi → `(values, records)`. |
+| `SingleActivePicker` | `false` | Opt-in: opening this picker closes any other open picker (one dropdown per page). Usually enabled fleet-wide by setting `SingleActivePicker: true` on the **provider's** options — `createPicker` seeds it into every picker it creates; an explicit per-picker value overrides. |
 
 ## View methods
 
@@ -247,6 +261,7 @@ Call these on the picker view instance — `this.pict.views['<hash>']`:
 | `getValue()` | The current selection — a scalar in single mode, an array of values in multi mode. |
 | `setValue(pValue)` | Set the selection programmatically — the supported counterpart to `getValue()`. Single mode takes a scalar; multi mode takes an array (or a csv string). Writes through to the bound address(es), resolves the display label of any unknown value (from the loaded options, else via `ResolveValue` in async mode), and repaints. Does **not** fire `OnChange` — it is a programmatic set (e.g. a host marshaling a form value into the control), not a user pick. Returns the view for chaining. |
 | `getSelectedRecords()` | (multi) The full `{Value, Text}` record list for the current selection. |
+| `reload()` | (async) Invalidate the loaded results and re-query the `DataProvider` — for a host whose contextual filters changed **outside** the picker (a "Show All" toggle, a dependent-field pick, …). An open dropdown re-queries immediately; a closed one on its next open. No-op for static `Options` pickers. Returns the view for chaining. |
 
 ```javascript
 const tmpPicker = this.pict.views['AuthorPicker'];
