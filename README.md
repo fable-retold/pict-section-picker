@@ -249,7 +249,7 @@ OnCreate: (pTerm) =>
 | `SelectedValuesAddress` | — | (multi) mirror the selection as a record array. |
 | `OnCreate` | — | `(term) => {Value, Text}` to enable creatable entries. |
 | `OnChange` | — | Called after a selection: single → `(value, record)`, multi → `(values, records)`. |
-| `SingleActivePicker` | `false` | Opt-in: opening this picker closes any other open picker (one dropdown per page). Usually enabled fleet-wide by setting `SingleActivePicker: true` on the **provider's** options — `createPicker` seeds it into every picker it creates; an explicit per-picker value overrides. |
+| `SingleActivePicker` | `false` | Opt-in: opening this picker closes any other open picker **that also opted in** (one dropdown per page). A picker left `false` neither closes a participant nor is closed by one. Usually enabled fleet-wide by setting `SingleActivePicker: true` on the **provider's** options — `createPicker` seeds it into every picker it creates; an explicit per-picker value overrides. |
 
 ## View methods
 
@@ -261,7 +261,11 @@ Call these on the picker view instance — `this.pict.views['<hash>']`:
 | `getValue()` | The current selection — a scalar in single mode, an array of values in multi mode. |
 | `setValue(pValue)` | Set the selection programmatically — the supported counterpart to `getValue()`. Single mode takes a scalar; multi mode takes an array (or a csv string). Writes through to the bound address(es), resolves the display label of any unknown value (from the loaded options, else via `ResolveValue` in async mode), and repaints. Does **not** fire `OnChange` — it is a programmatic set (e.g. a host marshaling a form value into the control), not a user pick. Returns the view for chaining. |
 | `getSelectedRecords()` | (multi) The full `{Value, Text}` record list for the current selection. |
-| `reload()` | (async) Invalidate the loaded results and re-query the `DataProvider` — for a host whose contextual filters changed **outside** the picker (a "Show All" toggle, a dependent-field pick, …). An open dropdown re-queries immediately; a closed one on its next open. No-op for static `Options` pickers. Returns the view for chaining. |
+
+> **Contextual scope changes need no hook.** An async picker drops its loaded pages when the dropdown
+> closes, so every open re-queries and re-resolves `BaseFilter`. A host whose filters change *outside*
+> the picker (a "Show All" toggle, a dependent-field pick) can just change them — the next open reflects
+> it. There is no cache to invalidate.
 
 ```javascript
 const tmpPicker = this.pict.views['AuthorPicker'];
@@ -270,9 +274,44 @@ tmpPicker.setValue([ 2, 10, 141 ]); // multi: select these values (array or "2,1
 const tmpSelected = tmpPicker.getValue();
 ```
 
+## Dropdown anchoring
+
+The dropdown anchors itself in CSS: `.pps-pop` is `position: absolute` against the control's own
+`.pps` box, so it travels with the control when the page scrolls — no measuring, no reflow work, and
+no scroll or resize listeners.
+
+That breaks in one situation: an ancestor with `overflow` other than `visible` clips an absolutely
+positioned panel. Such a container can't be un-clipped in CSS, because setting one axis to `auto` or
+`hidden` forces the other off `visible`.
+
+The escape is to give the panel a containing block outside the clip — an overflow ancestor only clips
+an absolutely positioned box when it sits in that box's containing-block chain. So on open the view
+walks up from the control, and when it finds a clipping ancestor it moves the panel out to `<body>`
+and places it in **document** coordinates, flipping above when the room below is short.
+
+It stays `position: absolute` there on purpose. An absolute box on `<body>` resolves against the
+document, so the browser keeps travelling it with the page exactly like the default path —
+`position: fixed` would resolve against the viewport and strand the panel the moment you scrolled.
+Both paths therefore anchor once and need no repositioning, and neither uses an event listener.
+
+While portaled the panel is pinned to the control's width and clamped to the room actually available,
+so its list scrolls in place rather than running off the screen. The mode is re-decided on each open
+and on any re-render that happens while open; closing brings the panel back inside its widget. In
+practice the portal engages inside scrolling table wrappers and dialog bodies, while a form row that
+sets no `overflow` anywhere above the control stays on the CSS path.
+
+Two things to know about the portal path:
+
+- It tracks **page** scroll, not scrolling *inside* the clipping container itself. Scrolling that
+  container while the dropdown is open would leave the panel behind — in practice unreachable, since
+  the open dropdown's backdrop covers the viewport and takes the wheel and the container's scrollbar.
+- A portaled panel is no longer a descendant of the host's markup, so CSS custom properties scoped to
+  a container above it stop applying and its `--theme-color-*` tokens fall back to their built-in
+  defaults. Define those tokens at `:root` (or on `body`) and both paths paint identically.
+
 ## Theming
 
-The widget paints from `--theme-color-*` tokens with sensible hex fallbacks, so it inherits the host app's theme. Relevant tokens: `--theme-color-brand-primary`, `--theme-color-text-primary`, `--theme-color-text-muted`, `--theme-color-border-default`, `--theme-color-border-light`, `--theme-color-border-strong`, `--theme-color-background-primary`, `--theme-color-background-panel`, `--theme-color-background-tertiary`.
+The widget paints from `--theme-color-*` tokens with sensible hex fallbacks, so it inherits the host app's theme. Define them at `:root` or on `body` rather than on a container around the picker — a dropdown that portals out (see [Dropdown anchoring](#dropdown-anchoring)) leaves a scoped container behind and would fall back to the defaults. Relevant tokens: `--theme-color-brand-primary`, `--theme-color-text-primary`, `--theme-color-text-muted`, `--theme-color-border-default`, `--theme-color-border-light`, `--theme-color-border-strong`, `--theme-color-background-primary`, `--theme-color-background-panel`, `--theme-color-background-tertiary`.
 
 ## Example application
 

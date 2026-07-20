@@ -247,7 +247,129 @@ class PickerDemoApplication extends libPictApplication
 		this.pict.views['ProgTagsPicker'].render();
 		this._showProgrammatic();
 
+		// --- Anchoring: the same picker in a clean row and inside a scrolling wrapper. The panel is
+		//     CSS-absolute against its control by default (it rides the page on scroll for free); only
+		//     when an ancestor clips does the view fall back to viewport anchoring and place it once.
+		//     The two pickers here differ ONLY in what they sit inside. ---
+		tmpPicker.createPicker('AnchorPlainPicker',
+			{
+				DestinationAddress: '#AnchorPlainPicker',
+				ValueAddress: 'AppData.Demo.AnchorPlain',
+				Placeholder: 'Open me, then scroll the page…',
+				Options: _Countries,
+			});
+		this.pict.views['AnchorPlainPicker'].render();
+		this._watchAnchorMode('AnchorPlainPicker', '#AnchorPlainMode');
+
+		tmpPicker.createPicker('AnchorClippedPicker',
+			{
+				DestinationAddress: '#AnchorClippedPicker',
+				ValueAddress: 'AppData.Demo.AnchorClipped',
+				Placeholder: 'Open me, then scroll…',
+				Options: _Countries,
+			});
+		this.pict.views['AnchorClippedPicker'].render();
+		this._watchAnchorMode('AnchorClippedPicker', '#AnchorClippedMode');
+
+		// --- Single-active fleet: two opted in, one deliberately not. The opt-out must be untouched in
+		//     both directions — it neither closes a participant nor is closed by one. ---
+		const fSoloReadout = () =>
+		{
+			const tmpOpen = [ 'SoloAPicker', 'SoloBPicker', 'SoloPlainPicker' ].filter((pHash) => this.pict.views[pHash]._open);
+			this.pict.ContentAssignment.assignContent('#SoloValue',
+				`open right now: <code>${tmpOpen.length ? tmpOpen.join(', ') : 'none'}</code>`);
+		};
+		[
+			{ Hash: 'SoloAPicker', Placeholder: 'Opted in (A)…', SingleActive: true },
+			{ Hash: 'SoloBPicker', Placeholder: 'Opted in (B)…', SingleActive: true },
+			{ Hash: 'SoloPlainPicker', Placeholder: 'Opted OUT — stacks freely…', SingleActive: false },
+		].forEach((pSpec) =>
+		{
+			tmpPicker.createPicker(pSpec.Hash,
+				{
+					DestinationAddress: `#${pSpec.Hash}`,
+					ValueAddress: `AppData.Demo.${pSpec.Hash}`,
+					Placeholder: pSpec.Placeholder,
+					Options: _Countries,
+					SingleActivePicker: pSpec.SingleActive,
+					OnChange: fSoloReadout,
+				});
+			const tmpView = this.pict.views[pSpec.Hash];
+			tmpView.render();
+			// Repaint the readout after any open/close so the fleet behavior is visible as it happens.
+			const fOpen = tmpView.open.bind(tmpView);
+			const fClose = tmpView.close.bind(tmpView);
+			tmpView.open = () => { fOpen(); fSoloReadout(); };
+			tmpView.close = () => { fClose(); fSoloReadout(); };
+		});
+		fSoloReadout();
+
+		// --- Cache lifetime: an out-of-band scope change, with nothing invalidating anything. The picker
+		//     drops its loaded pages on close, so the next open re-queries and re-reads the scope var.
+		//     The query counter proves the reopen actually hit the DataProvider. ---
+		this.pict.AppData.Demo.ItemScopeEvensOnly = false;
+		this.pict.AppData.Demo.ItemQueries = 0;
+		tmpPicker.createPicker('ScopeItemPicker',
+			{
+				DestinationAddress: '#ScopeItemPicker',
+				ValueAddress: 'AppData.Demo.ScopeItem',
+				Placeholder: 'Search items…',
+				PageSize: 20,
+				DataProvider: (pSearch, pPage) => new Promise((resolve) =>
+				{
+					this.pict.AppData.Demo.ItemQueries++;
+					this._showScope();
+					// Read the scope AT QUERY TIME — the same contract BaseFilter has for entity pickers.
+					const tmpScoped = this.pict.AppData.Demo.ItemScopeEvensOnly
+						? tmpItems.filter((pItem) => (pItem.Value % 2) === 0)
+						: tmpItems;
+					const tmpFiltered = pSearch ? tmpScoped.filter((pItem) => pItem.Text.toLowerCase().indexOf(pSearch.toLowerCase()) >= 0) : tmpScoped;
+					const tmpStart = (pPage || 0) * 20;
+					resolve({ results: tmpFiltered.slice(tmpStart, tmpStart + 20), hasMore: (tmpStart + 20) < tmpFiltered.length });
+				}),
+			});
+		this.pict.views['ScopeItemPicker'].render();
+		this._showScope();
+
 		return super.onAfterInitializeAsync(fCallback);
+	}
+
+	/**
+	 * Paint a picker's resolved anchoring mode after each open. Wraps open() rather than reading the flag
+	 * on a timer so the badge updates exactly when the decision is made.
+	 * @param {string} pViewHash @param {string} pBadgeSelector
+	 */
+	_watchAnchorMode(pViewHash, pBadgeSelector)
+	{
+		const tmpView = this.pict.views[pViewHash];
+		const fOpen = tmpView.open.bind(tmpView);
+		tmpView.open = () =>
+		{
+			fOpen();
+			const tmpPortaled = tmpView._portaled;
+			this.pict.ContentAssignment.assignContent(pBadgeSelector,
+				tmpPortaled ? 'portaled to body (clipped ancestor)' : 'CSS absolute (in place)');
+			const tmpElement = this.pict.ContentAssignment.getElement(pBadgeSelector);
+			if (tmpElement && tmpElement[0])
+			{
+				tmpElement[0].className = `demo-mode ${tmpPortaled ? 'demo-mode-fixed' : 'demo-mode-css'}`;
+			}
+		};
+	}
+
+	/** Flip the demo's contextual scope. Nothing else — no invalidation call, by design. */
+	toggleItemScope()
+	{
+		this.pict.AppData.Demo.ItemScopeEvensOnly = !this.pict.AppData.Demo.ItemScopeEvensOnly;
+		this._showScope();
+	}
+
+	/** Paint the current scope + the running DataProvider query count. */
+	_showScope()
+	{
+		this.pict.ContentAssignment.assignContent('#ScopeValue',
+			`scope: <code>${this.pict.AppData.Demo.ItemScopeEvensOnly ? 'evens only' : 'all items'}</code>`
+			+ ` · DataProvider queries: <code>${this.pict.AppData.Demo.ItemQueries}</code>`);
 	}
 
 	/** Set the single picker from outside via the public setValue() API, then refresh the readout. */

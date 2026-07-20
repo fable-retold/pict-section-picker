@@ -5,6 +5,13 @@ export = PictProviderPicker;
  */
 declare class PictProviderPicker extends libPictProvider {
     constructor(pFable: any, pOptions: any, pServiceHash: any);
+    /** @type {Record<string, {Dropped: boolean, Term: string|null}>} */
+    backOffState: Record<string, {
+        Dropped: boolean;
+        Term: string | null;
+    }>;
+    /** @type {string|false} */
+    currentOpenPickerHash: string | false;
     /**
      * Create (or reconfigure + reuse) a picker widget instance.
      *
@@ -81,9 +88,11 @@ declare class PictProviderPicker extends libPictProvider {
      *     Label: 'Year' }]`). A string spec shows the raw value; an object spec can prefix a `Label`
      *     (`"Year: 2000"`) or render a `Template` against the whole record. Renders as `Tags` (an array)
      *     alongside the optional single `Tag`.
+     * @param {string} [pStateKey] - Key (the picker hash) under which the back-off bookkeeping is held on
+     *   the provider, so it survives this closure being rebuilt on re-mount. Omit for closure-local state.
      * @return {(pSearchTerm: string, pPage: number) => Promise<{results: Array<any>, hasMore: boolean}>}
      */
-    createEntityDataProvider(pConfig: Record<string, any>): (pSearchTerm: string, pPage: number) => Promise<{
+    createEntityDataProvider(pConfig: Record<string, any>, pStateKey?: string): (pSearchTerm: string, pPage: number) => Promise<{
         results: Array<any>;
         hasMore: boolean;
     }>;

@@ -65,10 +65,18 @@ const _PickerCSS = /*css*/`
 .pps-backdrop { position: fixed; inset: 0; z-index: 0; display: none; }
 .pps.pps-open .pps-backdrop { display: block; }
 .pps.pps-open .pps-control { position: relative; z-index: 1; }
-/* Fixed (viewport-anchored) + JS-positioned in open(), so no ancestor's overflow:hidden — a card, a
-   slide-out drawer, a scroll pane — can ever clip the dropdown, whatever the host's layout. */
-.pps-pop { position: fixed; z-index: 40; min-width: 200px; display: none; }
+/* Anchored to the control's own box (.pps is position:relative), so the panel travels with the control
+   on page scroll for free — no measuring, no JS, no scroll listeners. This is the default because a
+   typical form-row wrapper sets no overflow, leaving nothing to clip the panel. */
+.pps-pop { position: absolute; z-index: 40; top: calc(100% + 0.3rem); left: 0; right: 0; min-width: 200px; display: none; }
 .pps.pps-open .pps-pop { display: block; }
+/* Clipped-context fallback, applied by the view when an ancestor sets overflow != visible (a scrolling
+   table wrapper, a dialog body). Such a container can't be un-clipped in CSS — an overflow:auto axis
+   forces the other axis off visible — so the view moves the panel out to <body> and places it once in
+   DOCUMENT coordinates. Still absolute, deliberately: an absolute box on <body> resolves against the
+   document, so the browser keeps it travelling with the page on scroll, exactly like the default path.
+   (position:fixed would resolve against the viewport and strand the panel when the page scrolled.) */
+.pps-pop.pps-pop-portal { position: absolute; right: auto; display: block; }
 .pps-panel { position: relative; z-index: 1; display: flex; flex-direction: column; max-height: min(60vh, 360px);
 	background: var(--theme-color-background-panel, #fff); border: 1px solid var(--theme-color-border-default, #d7dce3);
 	border-radius: 10px; box-shadow: 0 10px 28px rgba(17, 24, 39, 0.14); overflow: hidden; }
@@ -125,6 +133,19 @@ class PictProviderPicker extends libPictProvider
 		let tmpOptions = Object.assign({}, _DEFAULT_CONFIGURATION, pOptions);
 		super(pFable, tmpOptions, pServiceHash);
 
+		// Per-picker back-off bookkeeping, keyed by picker hash. This lives on the provider (a singleton
+		// with page lifetime) rather than in the DataProvider closure because createEntityPicker rebuilds
+		// that closure on EVERY call — and a form host re-mounts its pickers on every marshal, which would
+		// silently reset the state while the view's accumulated _loadedResults survived.
+		/** @type {Record<string, {Dropped: boolean, Term: string|null}>} */
+		this.backOffState = {};
+
+		// The hash of the picker whose dropdown is currently open, for the opt-in SingleActivePicker
+		// behavior. A hash (not a view reference) so nothing here retains a view, and provider-scoped so
+		// two pict instances on one page can't close each other's pickers.
+		/** @type {string|false} */
+		this.currentOpenPickerHash = false;
+
 		if (this.pict && this.pict.CSSMap && typeof this.pict.CSSMap.addCSS === 'function')
 		{
 			this.pict.CSSMap.addCSS('Pict-Section-Picker-CSS', _PickerCSS, 500);
@@ -161,7 +182,9 @@ class PictProviderPicker extends libPictProvider
 				SingleActivePicker: !!this.options.SingleActivePicker,
 			},
 			pConfig || {},
-			{ PickerHash: pPickerHash });
+			// PickerProvider lets the view reach provider-scoped bookkeeping (the single-active slot)
+			// without guessing the service hash this provider was registered under.
+			{ PickerHash: pPickerHash, PickerProvider: this });
 
 		if (this.pict.views[pPickerHash])
 		{
@@ -239,9 +262,11 @@ class PictProviderPicker extends libPictProvider
 	 *     Label: 'Year' }]`). A string spec shows the raw value; an object spec can prefix a `Label`
 	 *     (`"Year: 2000"`) or render a `Template` against the whole record. Renders as `Tags` (an array)
 	 *     alongside the optional single `Tag`.
+	 * @param {string} [pStateKey] - Key (the picker hash) under which the back-off bookkeeping is held on
+	 *   the provider, so it survives this closure being rebuilt on re-mount. Omit for closure-local state.
 	 * @return {(pSearchTerm: string, pPage: number) => Promise<{results: Array<any>, hasMore: boolean}>}
 	 */
-	createEntityDataProvider(pConfig)
+	createEntityDataProvider(pConfig, pStateKey)
 	{
 		const tmpEntity = pConfig.Entity;
 		const tmpSearchFields = (Array.isArray(pConfig.SearchFields) && pConfig.SearchFields.length > 0) ? pConfig.SearchFields : [ 'Name' ];
@@ -256,11 +281,14 @@ class PictProviderPicker extends libPictProvider
 		const tmpEntityTagFields = Array.isArray(pConfig.EntityTags) ? pConfig.EntityTags : false;
 		const tmpTextTemplate = pConfig.TextTemplate || false;
 
-		// Back-off state (per data-provider, i.e. per picker): once a page-0 search came back empty and
-		// was retried without the back-off set, later pages of the SAME term stay widened so "Load more"
-		// pages the widened set the user is actually looking at. A new page-0 search resets it.
-		let tmpBackOffDropped = false;
-		let tmpBackOffDroppedTerm = null;
+		// Back-off state: once a page-0 search came back empty and was retried without the back-off set,
+		// later pages of the SAME term stay widened so "Load more" pages the widened set the user is
+		// actually looking at. A new page-0 search resets it. Held on the provider (keyed by picker hash)
+		// so it outlives this closure — createEntityPicker rebuilds the closure on every mount, and hosts
+		// re-mount on every marshal. With no key (direct API use) it falls back to closure-local state.
+		const tmpBackOff = pStateKey
+			? (this.backOffState[pStateKey] = this.backOffState[pStateKey] || { Dropped: false, Term: null })
+			: { Dropped: false, Term: null };
 
 		return (pSearchTerm, pPage) => new Promise((resolve, reject) =>
 		{
@@ -282,8 +310,8 @@ class PictProviderPicker extends libPictProvider
 			const tmpScope = this._normalizeBaseFilter(tmpBaseFilter);
 
 			const tmpPageIndex = (pPage || 0);
-			if (tmpPageIndex === 0) { tmpBackOffDropped = false; tmpBackOffDroppedTerm = null; }
-			const tmpCarryWidened = tmpBackOffDropped && (tmpBackOffDroppedTerm === (pSearchTerm || ''));
+			if (tmpPageIndex === 0) { tmpBackOff.Dropped = false; tmpBackOff.Term = null; }
+			const tmpCarryWidened = tmpBackOff.Dropped && (tmpBackOff.Term === (pSearchTerm || ''));
 			const tmpApplyBackOff = !!tmpScope.BackOffFilter && !tmpCarryWidened;
 
 			const fComposeFilter = (pIncludeBackOff) =>
@@ -322,8 +350,8 @@ class PictProviderPicker extends libPictProvider
 					// "No matches" for options that exist just outside the preferred scope.
 					if (tmpList.length < 1 && tmpApplyBackOff && tmpPageIndex === 0)
 					{
-						tmpBackOffDropped = true;
-						tmpBackOffDroppedTerm = (pSearchTerm || '');
+						tmpBackOff.Dropped = true;
+						tmpBackOff.Term = (pSearchTerm || '');
 						return this.pict.EntityProvider.getEntitySetPage(tmpEntity, fComposeFilter(false), tmpCursor, tmpPageSize,
 							(pRetryError, pRetryRecords) =>
 							{
@@ -550,7 +578,8 @@ class PictProviderPicker extends libPictProvider
 	createEntityPicker(pPickerHash, pConfig)
 	{
 		const tmpConfig = Object.assign({}, pConfig);
-		tmpConfig.DataProvider = this.createEntityDataProvider(pConfig);
+		// Key the back-off state by picker hash so it survives this rebuild (hosts re-mount every marshal).
+		tmpConfig.DataProvider = this.createEntityDataProvider(pConfig, pPickerHash);
 		if (!tmpConfig.ResolveValue) { tmpConfig.ResolveValue = this.createEntityResolveValue(pConfig); }
 		return this.createPicker(pPickerHash, tmpConfig);
 	}

@@ -84,6 +84,73 @@
 				</div>
 			</div>
 			<div id="ProgValue" class="demo-value"></div>
+
+			<hr style="margin: 2rem 0 1.5rem; border: none; border-top: 1px solid #eceef2;" />
+
+			<!-- Anchoring: the same picker in a clean row vs. inside a scrolling wrapper. The badges show
+			     which mode each one resolved to on its last open. -->
+			<div class="demo-field">
+				<label>Anchoring <span class="demo-tag">in-place vs. body portal · both listener-free</span></label>
+				<div id="AnchorPlainPicker"></div>
+				<p class="demo-note">
+					Above: an ordinary row — nothing clips, so the panel is <code>position: absolute</code> against its
+					control and rides the page. Open it and scroll: it stays glued.
+					<span id="AnchorPlainMode" class="demo-mode demo-mode-idle">not opened yet</span>
+				</p>
+			</div>
+
+			<div class="demo-scrollpane" style="margin-top: 1rem;">
+				<table>
+					<thead>
+						<tr><th>Row</th><th>Picker in a scrolling wrapper</th><th>Filler column</th></tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>1</td>
+							<td style="min-width: 200px;"><div id="AnchorClippedPicker"></div></td>
+							<td>pushes the table past its wrapper</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p class="demo-note">
+				Inside a wrapper that scrolls, an absolute panel would be cut off — the wrapper is in its
+				containing-block chain. So the picker moves the panel out to <code>&lt;body&gt;</code> and places it in
+				document coordinates. It stays absolute rather than fixed, so this one <em>also</em> rides the page:
+				open it and scroll, and it should stay glued just like the one above — while still escaping the clip.
+				<span id="AnchorClippedMode" class="demo-mode demo-mode-idle">not opened yet</span>
+			</p>
+
+			<!-- Single-active: two participants + one opt-out, to prove the opt-out is untouched either way. -->
+			<div class="demo-field" style="margin-top: 1.75rem;">
+				<label>Single active picker <span class="demo-tag">opt-in · mixed fleet</span></label>
+				<div id="SoloAPicker"></div>
+				<div id="SoloBPicker" style="margin-top: 0.5rem;"></div>
+				<div id="SoloPlainPicker" style="margin-top: 0.5rem;"></div>
+				<p class="demo-note">
+					The first two opted in; the third did not. Opening either of the first two closes the other, and
+					neither closes the third — nor does the third close them. Open the third alongside one of the
+					others to see them coexist.
+				</p>
+				<div id="SoloValue" class="demo-value"></div>
+			</div>
+
+			<!-- Cache lifetime: an out-of-band scope change with no invalidation call anywhere. -->
+			<div class="demo-field" style="margin-top: 1.75rem;">
+				<label>Scope change <span class="demo-tag">no invalidation hook</span></label>
+				<div id="ScopeItemPicker"></div>
+				<div class="demo-btns">
+					<button type="button" class="demo-btn" onclick="_Pict.PictApplication.toggleItemScope()">Toggle scope (evens only)</button>
+				</div>
+				<p class="demo-note">
+					The picker drops its loaded pages when it closes, so the next open re-queries and re-reads the
+					filter. Open it, close it, toggle the scope, then reopen — the list reflects the new scope with
+					no <code>reload()</code> call. The counter below only advances on a real query.
+				</p>
+				<div id="ScopeValue" class="demo-value"></div>
+			</div>
+
+			<div class="demo-filler"></div>
 		</div>
 		<!-- Load the application bundle -->
 		<script src="./picker_demo.compatible.min.js" type="text/javascript"></script>

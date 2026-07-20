@@ -1,5 +1,5 @@
 /*
-	Back-off filter auto-widening + the reload() cache-invalidation hook.
+	Back-off filter auto-widening + the loaded-results cache lifetime.
 
 	BaseFilter's object form `{ Filters, BackOffFilters }` splits the host's contextual scope into a
 	mandatory set and a preferred (back-off) set. Both apply together first; an EMPTY first page under
@@ -7,8 +7,9 @@
 	stranding the user on "No matches". Later pages of the same search stay widened so "Load more"
 	pages the set the user is actually looking at.
 
-	reload() is the public cache-invalidation hook for a host whose contextual filters changed outside
-	the picker (e.g. a "Show All" toggle): drop the accumulated results, re-query now if open.
+	The accumulated pages are dropped when the dropdown CLOSES, so every open re-queries and re-resolves
+	BaseFilter. A host whose contextual filters changed outside the picker (e.g. a "Show All" toggle)
+	therefore needs no invalidation hook — the next open already reflects the change.
 */
 
 const libBrowserEnv = require('browser-env');
@@ -64,7 +65,7 @@ const MANDATORY = 'FBV~IDProject~EQ~10';
 
 suite
 (
-	'Pict-Section-Picker — back-off filters + reload()',
+	'Pict-Section-Picker — back-off filters + cache lifetime',
 	() =>
 	{
 		suite
@@ -178,36 +179,90 @@ suite
 						}).catch(fDone);
 					}
 				);
+				test
+				(
+					'the widened state survives a re-mount of the same picker (state is keyed by picker hash)',
+					(fDone) =>
+					{
+						// A form host re-mounts its pickers on every marshal, and createEntityPicker rebuilds the
+						// DataProvider closure each time. If the back-off bookkeeping lived in that closure, a
+						// marshal between page 0 and "Load more" would silently re-narrow page 1 and append it
+						// under the widened rows the view still holds.
+						const tmpProvider = newProvider();
+						const tmpCalls = withRespondingEntityProvider(tmpProvider,
+							(pCall) => pCall.Filter.includes(NARROW) ? [] : [ { IDMaterial: 9, Name: 'Wide' } ]);
+						const tmpConfig = { Entity: 'Material', PageSize: 1, BaseFilter: () => ({ Filters: MANDATORY, BackOffFilters: NARROW }) };
+						const tmpView = tmpProvider.createEntityPicker('RemountBackOffPicker', tmpConfig);
+						tmpView.options.DataProvider('w', 0).then(() =>
+						{
+							Expect(tmpCalls).to.have.lengthOf(2); // narrow attempt + widened retry
+							// The re-mount: same hash, fresh config object, brand new DataProvider closure.
+							const tmpRemounted = tmpProvider.createEntityPicker('RemountBackOffPicker', Object.assign({}, tmpConfig));
+							return tmpRemounted.options.DataProvider('w', 1);
+						}).then(() =>
+						{
+							Expect(tmpCalls).to.have.lengthOf(3);
+							Expect(tmpCalls[2].Filter).to.not.contain(NARROW);
+							return fDone();
+						}).catch(fDone);
+					}
+				);
+				test
+				(
+					'back-off state is per picker — one picker widening does not widen another',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						const tmpCalls = withRespondingEntityProvider(tmpProvider,
+							(pCall) => pCall.Filter.includes(NARROW) ? [] : [ { IDMaterial: 9, Name: 'Wide' } ]);
+						const tmpConfig = { Entity: 'Material', PageSize: 1, BaseFilter: () => ({ Filters: MANDATORY, BackOffFilters: NARROW }) };
+						const tmpFirst = tmpProvider.createEntityPicker('BackOffPickerOne', tmpConfig);
+						const tmpSecond = tmpProvider.createEntityPicker('BackOffPickerTwo', Object.assign({}, tmpConfig));
+						tmpFirst.options.DataProvider('w', 0).then(() =>
+						{
+							tmpCalls.length = 0;
+							// The second picker has its own slot, so its page 0 still tries the narrow scope first.
+							return tmpSecond.options.DataProvider('w', 0);
+						}).then(() =>
+						{
+							Expect(tmpCalls[0].Filter).to.contain(NARROW);
+							return fDone();
+						}).catch(fDone);
+					}
+				);
 			}
 		);
 
 		suite
 		(
-			'reload() — public cache invalidation',
+			'cache lifetime — closing drops the loaded pages',
 			() =>
 			{
 				test
 				(
-					'a CLOSED async picker drops its cache and re-queries on the next open',
+					'closing invalidates, and the next open re-queries (no invalidation hook needed)',
 					(fDone) =>
 					{
 						const tmpProvider = newProvider();
 						let tmpQueries = 0;
-						const tmpView = tmpProvider.createPicker('ReloadClosedPicker',
+						const tmpView = tmpProvider.createPicker('ReopenRequeryPicker',
 							{ DataProvider: () => { tmpQueries++; return Promise.resolve({ results: [ { Value: 1, Text: 'One' } ], hasMore: false }); } });
 						tmpView.open();
 						setTimeout(() =>
 						{
 							Expect(tmpQueries).to.equal(1);
 							tmpView.close();
-							tmpView.reload();
-							// Closed: invalidated but not re-queried yet.
+							// Closed: the accumulated pages are gone, but nothing is re-queried until it reopens.
 							Expect(tmpQueries).to.equal(1);
 							Expect(tmpView._loaded).to.equal(false);
 							Expect(tmpView._loadedResults).to.deep.equal([]);
+							Expect(tmpView._page).to.equal(0);
+							Expect(tmpView._hasMore).to.equal(false);
 							tmpView.open();
 							setTimeout(() =>
 							{
+								// A host whose contextual scope changed while we were closed (a "Show All" toggle)
+								// gets the new scope here, because BaseFilter is re-resolved on this query.
 								Expect(tmpQueries).to.equal(2);
 								return fDone();
 							}, 10);
@@ -216,35 +271,35 @@ suite
 				);
 				test
 				(
-					'an OPEN async picker re-queries immediately',
+					'a selected value keeps its label across the invalidation (selection is separate state)',
 					(fDone) =>
 					{
 						const tmpProvider = newProvider();
-						let tmpQueries = 0;
-						const tmpView = tmpProvider.createPicker('ReloadOpenPicker',
-							{ DataProvider: () => { tmpQueries++; return Promise.resolve({ results: [], hasMore: false }); } });
+						const tmpView = tmpProvider.createPicker('ReopenLabelPicker',
+							{ DataProvider: () => Promise.resolve({ results: [ { Value: 7, Text: 'Seven' } ], hasMore: false }) });
 						tmpView.open();
 						setTimeout(() =>
 						{
-							Expect(tmpQueries).to.equal(1);
-							tmpView.reload();
-							setTimeout(() =>
-							{
-								Expect(tmpQueries).to.equal(2);
-								Expect(tmpView._open).to.equal(true);
-								return fDone();
-							}, 10);
+							tmpView.select(7);
+							Expect(tmpView.getValue()).to.equal(7);
+							// select() closes in single mode, which drops _loadedResults — the label must survive
+							// because it lives in _selectedRecords, not in the result cache.
+							Expect(tmpView._loadedResults).to.deep.equal([]);
+							Expect(tmpView._lookupRecord(7).Text).to.equal('Seven');
+							return fDone();
 						}, 10);
 					}
 				);
 				test
 				(
-					'a static Options picker is a no-op (nothing cached to drop)',
+					'a static Options picker keeps its list across a close (nothing was cached)',
 					(fDone) =>
 					{
 						const tmpProvider = newProvider();
-						const tmpView = tmpProvider.createPicker('ReloadStaticPicker', { Options: [ { Value: 'a', Text: 'A' } ] });
-						Expect(tmpView.reload()).to.equal(tmpView);
+						const tmpView = tmpProvider.createPicker('ReopenStaticPicker', { Options: [ { Value: 'a', Text: 'A' } ] });
+						tmpView.open();
+						tmpView.close();
+						Expect(tmpView._sourceRows()).to.deep.equal([ { Value: 'a', Text: 'A' } ]);
 						return fDone();
 					}
 				);
