@@ -85,7 +85,7 @@ suite
 				// with no measuring at all — which is why there is nothing to re-run on scroll or resize.
 				const tmpProvider = newProvider();
 				const tmpView = tmpProvider.createPicker('CleanAnchorPicker', { Options: COUNTRY_OPTIONS });
-				tmpView._hasClippingAncestor = () => false;
+				tmpView._shouldPortal = () => false;
 				withPopElement(tmpView, (pPop) =>
 				{
 					tmpView.open();
@@ -108,7 +108,7 @@ suite
 				// travels it with the page, so this path needs no repositioning either.
 				const tmpProvider = newProvider();
 				const tmpView = tmpProvider.createPicker('ClippedAnchorPicker', { Options: COUNTRY_OPTIONS });
-				tmpView._hasClippingAncestor = () => true;
+				tmpView._shouldPortal = () => true;
 				withPopElement(tmpView, (pPop) =>
 				{
 					tmpView.open();
@@ -129,7 +129,7 @@ suite
 				// go with it — they would beat the stylesheet and strand the panel on the next CSS-path open.
 				const tmpProvider = newProvider();
 				const tmpView = tmpProvider.createPicker('AnchorSwitchPicker', { Options: COUNTRY_OPTIONS });
-				tmpView._hasClippingAncestor = () => true;
+				tmpView._shouldPortal = () => true;
 				withPopElement(tmpView, (pPop) =>
 				{
 					tmpView.open();
@@ -155,7 +155,7 @@ suite
 				// back the wrong panel (and with it the wrong search box).
 				const tmpProvider = newProvider();
 				const tmpView = tmpProvider.createPicker('OrphanSweepPicker', { Options: COUNTRY_OPTIONS });
-				tmpView._hasClippingAncestor = () => true;
+				tmpView._shouldPortal = () => true;
 				withPopElement(tmpView, (pPop) =>
 				{
 					tmpView.open();
@@ -325,6 +325,185 @@ suite
 				tmpOther.close();
 				Expect(tmpProvider.currentOpenPickerHash).to.equal(false);
 				tmpPlain.close();
+				return fDone();
+			}
+		);
+		test
+		(
+			'a clip the panel would clear keeps the CSS path (an overflow ancestor alone does not portal)',
+			(fDone) =>
+			{
+				// The reviewer's point: overflow:hidden is everywhere (rounded corners, ellipsis). We portal
+				// only when the clip would actually reach the panel — a dropdown with room to open in place
+				// stays on the cheap CSS path and keeps its scoped tokens / inner-scroll tracking.
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('ClipFitsPicker', { Options: COUNTRY_OPTIONS });
+				withPopElement(tmpView, (pPop) =>
+				{
+					const tmpRoot = document.getElementById('PPS_ClipFitsPicker');
+					const tmpControl = tmpRoot.querySelector('.pps-control');
+					tmpRoot.style.overflowY = 'hidden'; // a real clipping ancestor…
+					// …but a tall one that a 360px panel below the control clears with room to spare.
+					tmpControl.getBoundingClientRect = () => ({ top: 100, bottom: 130, left: 50, right: 250, width: 200, height: 30 });
+					tmpRoot.getBoundingClientRect = () => ({ top: 0, bottom: 900, left: 0, right: 400, width: 400, height: 900 });
+					tmpView.open();
+					Expect(tmpView._portaled, 'clip does not reach the panel → CSS path').to.equal(false);
+					Expect(pPop.classList.contains('pps-pop-portal')).to.equal(false);
+					Expect(pPop.parentElement.id).to.equal('PPS_ClipFitsPicker');
+					return fDone();
+				});
+			}
+		);
+		test
+		(
+			'a clip the panel would overflow portals it out (the escape the CSS path cannot give)',
+			(fDone) =>
+			{
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('ClipBitesPicker', { Options: COUNTRY_OPTIONS });
+				withPopElement(tmpView, (pPop) =>
+				{
+					const tmpRoot = document.getElementById('PPS_ClipBitesPicker');
+					const tmpControl = tmpRoot.querySelector('.pps-control');
+					tmpRoot.style.overflowY = 'hidden';
+					// The control sits near the bottom of a short clipper: a 360px panel below runs past it.
+					tmpControl.getBoundingClientRect = () => ({ top: 700, bottom: 730, left: 50, right: 250, width: 200, height: 30 });
+					tmpRoot.getBoundingClientRect = () => ({ top: 0, bottom: 760, left: 0, right: 400, width: 400, height: 760 });
+					tmpView.open();
+					Expect(tmpView._portaled, 'clip reaches the panel → portal').to.equal(true);
+					Expect(pPop.classList.contains('pps-pop-portal')).to.equal(true);
+					Expect(pPop.parentElement, 'out on body').to.equal(document.body);
+					return fDone();
+				});
+			}
+		);
+		test
+		(
+			'a portaled panel carries the resolved theme tokens across, and _restorePop clears them',
+			(fDone) =>
+			{
+				// A portaled panel no longer inherits from a scoped container, so it copies the resolved
+				// --theme-color-* off the control; bringing it home drops them so it inherits live again.
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('TokenPortalPicker', { Options: COUNTRY_OPTIONS });
+				tmpView._shouldPortal = () => true;
+				const tmpRealGCS = window.getComputedStyle;
+				window.getComputedStyle = () => ({ getPropertyValue: (pProp) => (pProp === '--theme-color-brand-primary' ? 'rgb(1, 2, 3)' : '') });
+				try
+				{
+					withPopElement(tmpView, (pPop) =>
+					{
+						// jsdom's CSSStyleDeclaration doesn't round-trip custom properties, so assert the
+						// mechanism by watching the writes rather than reading the value back.
+						const tmpSet = {};
+						const tmpRemoved = {};
+						const tmpRealSet = pPop.style.setProperty.bind(pPop.style);
+						const tmpRealRemove = pPop.style.removeProperty.bind(pPop.style);
+						pPop.style.setProperty = (pProp, pVal) => { if (String(pProp).indexOf('--theme-color-') === 0) { tmpSet[pProp] = pVal; } return tmpRealSet(pProp, pVal); };
+						pPop.style.removeProperty = (pProp) => { if (String(pProp).indexOf('--theme-color-') === 0) { tmpRemoved[pProp] = true; } return tmpRealRemove(pProp); };
+						tmpView.open();
+						Expect(tmpSet['--theme-color-brand-primary'], 'resolved token copied onto the portaled panel').to.equal('rgb(1, 2, 3)');
+						tmpView.close();
+						Expect(tmpRemoved['--theme-color-brand-primary'], 'token cleared when the panel comes home').to.equal(true);
+						return fDone();
+					});
+				}
+				finally { window.getComputedStyle = tmpRealGCS; }
+			}
+		);
+		test
+		(
+			'a portaled panel is shown only while open (pps-pop-open gates it, not the widget open rule)',
+			(fDone) =>
+			{
+				// On <body> the panel is outside .pps.pps-open, so its own pps-pop-open class is what makes
+				// it visible — a stray one (orphaned by a re-render) shows nothing until it is genuinely open.
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('PortalOpenGatePicker', { Options: COUNTRY_OPTIONS });
+				tmpView._shouldPortal = () => true;
+				withPopElement(tmpView, (pPop) =>
+				{
+					tmpView.open();
+					Expect(pPop.classList.contains('pps-pop-portal')).to.equal(true);
+					Expect(pPop.classList.contains('pps-pop-open'), 'shown while open').to.equal(true);
+					tmpView.close();
+					Expect(pPop.classList.contains('pps-pop-open'), 'hidden once closed').to.equal(false);
+					return fDone();
+				});
+			}
+		);
+		test
+		(
+			'close releases the provider back-off entry (it never outlives an open session)',
+			(fDone) =>
+			{
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('BackOffReleasePicker', { Options: COUNTRY_OPTIONS });
+				tmpProvider.backOffState['BackOffReleasePicker'] = { Dropped: true, Term: 'abc' };
+				tmpView.open();
+				tmpView.close();
+				Expect(Object.prototype.hasOwnProperty.call(tmpProvider.backOffState, 'BackOffReleasePicker'), 'entry gone after close').to.equal(false);
+				return fDone();
+			}
+		);
+		test
+		(
+			'destroy() releases the slot, the back-off entry, and any portaled panel',
+			(fDone) =>
+			{
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('DestroyPicker', { Options: COUNTRY_OPTIONS, SingleActivePicker: true });
+				tmpProvider.backOffState['DestroyPicker'] = { Dropped: true, Term: 'x' };
+				tmpView._shouldPortal = () => true;
+				withPopElement(tmpView, (pPop) =>
+				{
+					tmpView.open();
+					Expect(pPop.parentElement, 'portaled out on open').to.equal(document.body);
+					Expect(tmpProvider.currentOpenPickerHash).to.equal('DestroyPicker');
+					tmpView.destroy();
+					Expect(tmpProvider.currentOpenPickerHash, 'slot released').to.equal(false);
+					Expect(Object.prototype.hasOwnProperty.call(tmpProvider.backOffState, 'DestroyPicker'), 'back-off entry released').to.equal(false);
+					Expect(document.querySelectorAll('body > [id="PPS_Pop_DestroyPicker"]').length, 'no orphan left on body').to.equal(0);
+					return fDone();
+				});
+			}
+		);
+		test
+		(
+			'a re-seed while live refreshes the value area without a full render (search box + focus survive)',
+			(fDone) =>
+			{
+				// A form marshal re-runs mount + setValue on every solve. Once the widget is live that has to
+				// be a targeted value refresh, not a teardown — else the search box (and a mid-search focus)
+				// is rebuilt away. This is the answer to "why does the marshal re-render".
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('ReseedPicker', { Options: COUNTRY_OPTIONS });
+				withPopElement(tmpView, () =>
+				{
+					let tmpFullRenders = 0;
+					let tmpValueRefreshes = 0;
+					tmpView.render = () => { tmpFullRenders++; };
+					tmpView._renderValue = () => { tmpValueRefreshes++; };
+					// Root #PPS_ReseedPicker is live (withPopElement built it), so the re-seed is targeted.
+					tmpView.setValue('ca');
+					Expect(tmpFullRenders, 'no teardown render while live').to.equal(0);
+					Expect(tmpValueRefreshes, 'value area refreshed instead').to.equal(1);
+					return fDone();
+				});
+			}
+		);
+		test
+		(
+			'a re-seed before the widget is live does the full build',
+			(fDone) =>
+			{
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('ReseedColdPicker', { Options: COUNTRY_OPTIONS });
+				let tmpFullRenders = 0;
+				tmpView.render = () => { tmpFullRenders++; };
+				// No #PPS_ReseedColdPicker in the DOM → _reflectValue must fall back to a full render.
+				tmpView.setValue('mx');
+				Expect(tmpFullRenders, 'builds when not yet live').to.equal(1);
 				return fDone();
 			}
 		);

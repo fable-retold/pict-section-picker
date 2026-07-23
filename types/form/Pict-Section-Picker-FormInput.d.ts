@@ -54,6 +54,10 @@ declare class PictInputTypePicker extends PictInputTypePicker_base {
      * onInputInitialize and onDataMarshalToForm because, in the async-virtual filter render, the host
      * element only exists in the real DOM by the marshal pass — whichever hook fires post-DOM wins, and
      * re-calls are harmless (the picker view is reused by hash).
+     *
+     * setValue does the work: it builds the widget on the first call and, once the widget is live, re-seeds
+     * the value WITHOUT a full render — so a marshal (which re-runs this on every solve) no longer rebuilds
+     * the search box or orphans a portaled dropdown. That is why there is no explicit render() here.
      * @return {boolean} true if the picker is mounted.
      */
     _mountPicker(pView: any, pInput: any, pValue: any, pHostSelector: any, pPickerHash: any, fOnChange: any): boolean;

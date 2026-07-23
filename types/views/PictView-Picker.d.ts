@@ -44,6 +44,15 @@ declare class PictViewPicker extends libPictView {
      */
     setValue(pValue: any): PictViewPicker;
     /**
+     * Reflect the current value into the DOM after a programmatic setValue. The first call — widget not
+     * yet in the DOM — does the full build; once the widget is live it refreshes the value area and the
+     * option list (whose selected-row checkmark tracks the value) but nothing else. A form host re-runs
+     * the mount + setValue on every marshal, and a full render there would rebuild the search box
+     * (dropping a mid-search focus) and orphan a portaled panel; the targeted path avoids both.
+     * select()/clearValue() keep their own full renders — this is only the setValue path.
+     */
+    _reflectValue(): void;
+    /**
      * Ensure each value has a {Value,Text} in _selectedRecords — from the current source rows when
      * present, else (async mode) fetched via ResolveValue and painted in when it resolves.
      * @param {Array<any>} pValues
@@ -130,8 +139,13 @@ declare class PictViewPicker extends libPictView {
      * clips an absolutely positioned box when it sits in that box's containing-block chain. So we move
      * the panel out to <body> and place it in document coordinates. It stays `absolute` on purpose —
      * absolute against the document means the browser keeps it travelling with the page on scroll, so
-     * this path needs no repositioning either. Clipping is detected from the CONTROL, which never moves;
+     * this path needs no repositioning either. Clipping is judged from the CONTROL, which never moves;
      * testing the panel would flip-flop, since a portaled panel has no clipping ancestors by definition.
+     *
+     * We portal only when the clip would ACTUALLY reach the panel (_shouldPortal): a dropdown with room
+     * to open in place stays on the cheap CSS path even inside a scroll container, keeping its scoped
+     * theme tokens and its inner-container scroll tracking. Only one near a clipping edge portals — the
+     * one case where the portal is the right answer — so an overflow ancestor is not by itself enough.
      */
     _applyAnchorMode(): void;
     /**
@@ -149,13 +163,35 @@ declare class PictViewPicker extends libPictView {
      */
     _restorePop(pPop: HTMLElement): void;
     /**
-     * True when some ancestor between the element and the body establishes an overflow clip, which would
-     * cut off an absolutely-positioned dropdown. Stops at body: the document's own scrolling is what the
-     * absolute anchoring rides on, not a clip.
-     * @param {HTMLElement} pElement
+     * Whether this open should portal the panel out to <body>: true only when the control sits inside a
+     * clipping ancestor AND that clip would actually reach the panel (_clipBites). A dropdown with room
+     * to open in place stays on the CSS path even inside a scroll container — an overflow ancestor alone
+     * is not enough. Judged from the control, which never moves.
+     * @param {HTMLElement} pControl
      * @return {boolean}
      */
+    _shouldPortal(pControl: HTMLElement): boolean;
+    /**
+     * The nearest ancestor between the element and the body that establishes an overflow clip (overflow
+     * on any axis != visible), or null. Stops at body: the document's own scrolling is what the absolute
+     * anchoring rides on, not a clip.
+     * @param {HTMLElement} pElement
+     * @return {HTMLElement|null}
+     */
+    _clippingAncestor(pElement: HTMLElement): HTMLElement | null;
+    /** True when the control has any overflow-clipping ancestor. Thin boolean over _clippingAncestor;
+     *  the anchor decision uses _shouldPortal, which also weighs whether the clip reaches the panel.
+     *  @param {HTMLElement} pElement @return {boolean} */
     _hasClippingAncestor(pElement: HTMLElement): boolean;
+    /**
+     * Whether the clipper would cut the panel if it opened in place. The CSS path always opens DOWNWARD
+     * (top: calc(100% + gap)) and never flips, clamped to its own max-height — so project that worst-case
+     * box below the control and ask whether any edge falls outside the clipper's box. When it fits, the
+     * CSS path is safe; when it doesn't, only the portal (which can flip above and escape) will do. A
+     * pixel of slack keeps a flush edge from forcing a needless portal on sub-pixel rounding.
+     * @param {HTMLElement} pControl @param {HTMLElement} pClipper @return {boolean}
+     */
+    _clipBites(pControl: HTMLElement, pClipper: HTMLElement): boolean;
     /**
      * Mark the dropdown closed: the transient open state, the provider's active-picker slot, and the
      * loaded-results cache. Shared by every path that closes the dropdown (close(), a single-mode select,
@@ -167,7 +203,16 @@ declare class PictViewPicker extends libPictView {
     loadMore(): void;
     /** Close the dropdown. */
     close(): void;
-    /** Reflect the open/closed state on the widget container. */
+    /**
+     * Release everything this picker holds outside its own DOM subtree, for a host that tears the view
+     * down. pict-view has no destroy lifecycle, so this is opt-in — call it before dropping the view.
+     * The un-destroyed case is already harmless: a portaled panel is hidden unless `pps-pop-open` is set
+     * (so a stray one shows nothing), and its back-off / single-active state is released on close.
+     */
+    destroy(): void;
+    /** Reflect the open/closed state on the widget container. Also stamp the pop element itself, since a
+     *  portaled panel is no longer a descendant of `.pps-open` and the stylesheet's open rule can't reach
+     *  it — its visibility keys off `pps-pop-open` instead, so a stray portaled panel stays hidden. */
     _paintOpen(): void;
     /** Re-render only the option list (keeps the search input + its focus intact). */
     _renderList(): void;

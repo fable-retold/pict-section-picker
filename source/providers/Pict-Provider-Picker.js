@@ -70,13 +70,17 @@ const _PickerCSS = /*css*/`
    typical form-row wrapper sets no overflow, leaving nothing to clip the panel. */
 .pps-pop { position: absolute; z-index: 40; top: calc(100% + 0.3rem); left: 0; right: 0; min-width: 200px; display: none; }
 .pps.pps-open .pps-pop { display: block; }
-/* Clipped-context fallback, applied by the view when an ancestor sets overflow != visible (a scrolling
-   table wrapper, a dialog body). Such a container can't be un-clipped in CSS — an overflow:auto axis
-   forces the other axis off visible — so the view moves the panel out to <body> and places it once in
-   DOCUMENT coordinates. Still absolute, deliberately: an absolute box on <body> resolves against the
-   document, so the browser keeps it travelling with the page on scroll, exactly like the default path.
-   (position:fixed would resolve against the viewport and strand the panel when the page scrolled.) */
-.pps-pop.pps-pop-portal { position: absolute; right: auto; display: block; }
+/* Clipped-context fallback, applied by the view when a clipping ancestor (overflow != visible) would
+   actually cut the panel — a scrolling table wrapper, a dialog body. Such a container can't be
+   un-clipped in CSS (an overflow:auto axis forces the other axis off visible), so the view moves the
+   panel out to <body> and places it once in DOCUMENT coordinates. Still absolute, deliberately: an
+   absolute box on <body> resolves against the document, so the browser keeps it travelling with the
+   page on scroll, exactly like the default path. (position:fixed would resolve against the viewport and
+   strand the panel when the page scrolled.) Visibility keys off the pps-pop-open class rather than the
+   widget's .pps.pps-open rule, which can't reach a panel that no longer descends from the widget — so a
+   stray portaled panel (e.g. orphaned by a re-render) shows nothing until it is genuinely open. */
+.pps-pop.pps-pop-portal { position: absolute; right: auto; display: none; }
+.pps-pop.pps-pop-portal.pps-pop-open { display: block; }
 .pps-panel { position: relative; z-index: 1; display: flex; flex-direction: column; max-height: min(60vh, 360px);
 	background: var(--theme-color-background-panel, #fff); border: 1px solid var(--theme-color-border-default, #d7dce3);
 	border-radius: 10px; box-shadow: 0 10px 28px rgba(17, 24, 39, 0.14); overflow: hidden; }

@@ -1,5 +1,18 @@
 const libPictView = require('pict-view');
 
+/**
+ * The theme custom properties the widget paints from. Copied onto a portaled panel so it keeps the
+ * host's theme after it stops inheriting from a scoped container (see _portalPop / _restorePop).
+ * @type {Array<string>}
+ */
+const _THEME_TOKENS =
+[
+	'--theme-color-brand-primary', '--theme-color-text-primary', '--theme-color-text-secondary',
+	'--theme-color-text-muted', '--theme-color-border-default', '--theme-color-border-light',
+	'--theme-color-border-strong', '--theme-color-background-primary', '--theme-color-background-panel',
+	'--theme-color-background-tertiary',
+];
+
 /** @type {Record<string, any>} */
 const _DEFAULT_CONFIGURATION =
 {
@@ -416,8 +429,27 @@ class PictViewPicker extends libPictView
 			this._selectedText = null;
 			this._seedSelectedRecords((pValue === undefined || pValue === null || pValue === '') ? [] : [ pValue ]);
 		}
-		this.render();
+		this._reflectValue();
 		return this;
+	}
+
+	/**
+	 * Reflect the current value into the DOM after a programmatic setValue. The first call — widget not
+	 * yet in the DOM — does the full build; once the widget is live it refreshes the value area and the
+	 * option list (whose selected-row checkmark tracks the value) but nothing else. A form host re-runs
+	 * the mount + setValue on every marshal, and a full render there would rebuild the search box
+	 * (dropping a mid-search focus) and orphan a portaled panel; the targeted path avoids both.
+	 * select()/clearValue() keep their own full renders — this is only the setValue path.
+	 */
+	_reflectValue()
+	{
+		const tmpLive = (typeof document !== 'undefined') && !!document.getElementById(`PPS_${this.options.PickerHash}`);
+		if (!tmpLive) { this.render(); return; }
+		this._renderValue();
+		// Refresh the list too, even while closed: its selected-row checkmark tracks the value, and the
+		// list container is a hidden sibling of the search box + pop, so rebuilding it keeps the mark in
+		// step on the NEXT open without tearing down the search box (losing focus) or orphaning a portal.
+		this._renderList();
 	}
 
 	/**
@@ -755,8 +787,13 @@ class PictViewPicker extends libPictView
 	 * clips an absolutely positioned box when it sits in that box's containing-block chain. So we move
 	 * the panel out to <body> and place it in document coordinates. It stays `absolute` on purpose —
 	 * absolute against the document means the browser keeps it travelling with the page on scroll, so
-	 * this path needs no repositioning either. Clipping is detected from the CONTROL, which never moves;
+	 * this path needs no repositioning either. Clipping is judged from the CONTROL, which never moves;
 	 * testing the panel would flip-flop, since a portaled panel has no clipping ancestors by definition.
+	 *
+	 * We portal only when the clip would ACTUALLY reach the panel (_shouldPortal): a dropdown with room
+	 * to open in place stays on the cheap CSS path even inside a scroll container, keeping its scoped
+	 * theme tokens and its inner-container scroll tracking. Only one near a clipping edge portals — the
+	 * one case where the portal is the right answer — so an overflow ancestor is not by itself enough.
 	 */
 	_applyAnchorMode()
 	{
@@ -764,9 +801,12 @@ class PictViewPicker extends libPictView
 		const tmpPop = this._popElement();
 		if (!tmpPop) { return; }
 		const tmpControl = tmpRoot ? /** @type {HTMLElement} */ (tmpRoot.querySelector('.pps-control')) : null;
-		this._portaled = !!tmpControl && this._hasClippingAncestor(tmpControl);
-		if (this._portaled) { return this._portalPop(tmpPop); }
-		this._restorePop(tmpPop);
+		this._portaled = !!tmpControl && this._shouldPortal(tmpControl);
+		if (this._portaled) { this._portalPop(tmpPop); }
+		else { this._restorePop(tmpPop); }
+		// Keep the pop's open-state class in step with the anchoring it just took (portaled panels are
+		// hidden until this class is set, since the widget's .pps-open rule can't reach them on <body>).
+		tmpPop.classList.toggle('pps-pop-open', !!this._open);
 	}
 
 	/**
@@ -788,6 +828,22 @@ class PictViewPicker extends libPictView
 			.forEach((pNode) => { if (pNode !== pPop) { pNode.remove(); } });
 		if (pPop.parentElement !== document.body) { document.body.appendChild(pPop); }
 		pPop.classList.add('pps-pop-portal');
+
+		// The panel no longer inherits from a container that may have scoped the theme tokens, so carry
+		// the RESOLVED values across with it — otherwise a host that scopes --theme-color-* to a wrapper
+		// (not :root) would see the built-in hex fallbacks the moment the panel portals. Read off the
+		// control, which stays inside the scope. A token the host never
+		// defined reads empty and is skipped — pinning it to "" would satisfy the var(--token, #hex) lookup
+		// and defeat the built-in fallback.
+		if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function')
+		{
+			const tmpComputed = window.getComputedStyle(tmpControl);
+			_THEME_TOKENS.forEach((pToken) =>
+			{
+				const tmpValue = tmpComputed.getPropertyValue(pToken);
+				if (tmpValue && tmpValue.trim() !== '') { pPop.style.setProperty(pToken, tmpValue.trim()); }
+			});
+		}
 
 		const tmpRect = tmpControl.getBoundingClientRect();
 		const tmpGap = 5;
@@ -838,31 +894,82 @@ class PictViewPicker extends libPictView
 		pPop.style.bottom = '';
 		pPop.style.width = '';
 		pPop.style.transform = '';
+		// Drop the theme tokens the portal copied on, so back inside its widget the panel inherits them
+		// live again rather than freezing whatever value was resolved at portal time.
+		_THEME_TOKENS.forEach((pToken) => pPop.style.removeProperty(pToken));
 		const tmpPanel = /** @type {HTMLElement} */ (pPop.querySelector('.pps-panel'));
 		if (tmpPanel) { tmpPanel.style.maxHeight = ''; }
 	}
 
 	/**
-	 * True when some ancestor between the element and the body establishes an overflow clip, which would
-	 * cut off an absolutely-positioned dropdown. Stops at body: the document's own scrolling is what the
-	 * absolute anchoring rides on, not a clip.
-	 * @param {HTMLElement} pElement
+	 * Whether this open should portal the panel out to <body>: true only when the control sits inside a
+	 * clipping ancestor AND that clip would actually reach the panel (_clipBites). A dropdown with room
+	 * to open in place stays on the CSS path even inside a scroll container — an overflow ancestor alone
+	 * is not enough. Judged from the control, which never moves.
+	 * @param {HTMLElement} pControl
 	 * @return {boolean}
 	 */
-	_hasClippingAncestor(pElement)
+	_shouldPortal(pControl)
 	{
-		if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') { return false; }
+		const tmpClipper = this._clippingAncestor(pControl);
+		if (!tmpClipper) { return false; }
+		return this._clipBites(pControl, tmpClipper);
+	}
+
+	/**
+	 * The nearest ancestor between the element and the body that establishes an overflow clip (overflow
+	 * on any axis != visible), or null. Stops at body: the document's own scrolling is what the absolute
+	 * anchoring rides on, not a clip.
+	 * @param {HTMLElement} pElement
+	 * @return {HTMLElement|null}
+	 */
+	_clippingAncestor(pElement)
+	{
+		if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') { return null; }
 		let tmpNode = pElement ? pElement.parentElement : null;
 		while (tmpNode && tmpNode.nodeType === 1 && tmpNode !== document.body)
 		{
 			const tmpStyle = window.getComputedStyle(tmpNode);
 			if (tmpStyle && [ tmpStyle.overflow, tmpStyle.overflowX, tmpStyle.overflowY ].some((pValue) => pValue && pValue !== 'visible'))
 			{
-				return true;
+				return /** @type {HTMLElement} */ (tmpNode);
 			}
 			tmpNode = tmpNode.parentElement;
 		}
-		return false;
+		return null;
+	}
+
+	/** True when the control has any overflow-clipping ancestor. Thin boolean over _clippingAncestor;
+	 *  the anchor decision uses _shouldPortal, which also weighs whether the clip reaches the panel.
+	 *  @param {HTMLElement} pElement @return {boolean} */
+	_hasClippingAncestor(pElement) { return !!this._clippingAncestor(pElement); }
+
+	/**
+	 * Whether the clipper would cut the panel if it opened in place. The CSS path always opens DOWNWARD
+	 * (top: calc(100% + gap)) and never flips, clamped to its own max-height — so project that worst-case
+	 * box below the control and ask whether any edge falls outside the clipper's box. When it fits, the
+	 * CSS path is safe; when it doesn't, only the portal (which can flip above and escape) will do. A
+	 * pixel of slack keeps a flush edge from forcing a needless portal on sub-pixel rounding.
+	 * @param {HTMLElement} pControl @param {HTMLElement} pClipper @return {boolean}
+	 */
+	_clipBites(pControl, pClipper)
+	{
+		if (!pControl || !pClipper || typeof pControl.getBoundingClientRect !== 'function'
+			|| typeof pClipper.getBoundingClientRect !== 'function') { return true; }
+		const tmpControlRect = pControl.getBoundingClientRect();
+		const tmpClipRect = pClipper.getBoundingClientRect();
+		const tmpGap = 5;
+		const tmpIdeal = 360;
+		const tmpSlack = 1;
+		const tmpPanelTop = tmpControlRect.bottom + tmpGap;
+		const tmpPanelBottom = tmpPanelTop + tmpIdeal;
+		const tmpWidth = Math.max(200, tmpControlRect.width);
+		const tmpPanelLeft = tmpControlRect.left;
+		const tmpPanelRight = tmpControlRect.left + tmpWidth;
+		return (tmpPanelBottom > tmpClipRect.bottom + tmpSlack)
+			|| (tmpPanelTop < tmpClipRect.top - tmpSlack)
+			|| (tmpPanelLeft < tmpClipRect.left - tmpSlack)
+			|| (tmpPanelRight > tmpClipRect.right + tmpSlack);
 	}
 
 	/**
@@ -888,6 +995,10 @@ class PictViewPicker extends libPictView
 		this._loadedResults = [];
 		this._page = 0;
 		this._hasMore = false;
+		// Release the back-off bookkeeping too: it only spans page 0 → "load more" within one open
+		// session (like the result cache above), so bounding it to open pickers keeps the provider map
+		// from growing an entry per picker for the life of a long-lived, never-refreshed page.
+		if (tmpProvider && tmpProvider.backOffState) { delete tmpProvider.backOffState[this.options.PickerHash]; }
 	}
 
 
@@ -907,11 +1018,36 @@ class PictViewPicker extends libPictView
 		this._paintOpen();
 	}
 
-	/** Reflect the open/closed state on the widget container. */
+	/**
+	 * Release everything this picker holds outside its own DOM subtree, for a host that tears the view
+	 * down. pict-view has no destroy lifecycle, so this is opt-in — call it before dropping the view.
+	 * The un-destroyed case is already harmless: a portaled panel is hidden unless `pps-pop-open` is set
+	 * (so a stray one shows nothing), and its back-off / single-active state is released on close.
+	 */
+	destroy()
+	{
+		// _markClosed already drops the single-active slot if held, brings a portaled panel home (or
+		// removes it when the widget root is gone), and clears the back-off entry.
+		this._markClosed();
+		this._paintOpen();
+		// If a portaled panel is somehow still on <body> — e.g. the widget root was detached mid-teardown
+		// before this ran — take it with us rather than leaving an orphan.
+		if (typeof document !== 'undefined')
+		{
+			const tmpStray = document.querySelector(`body > [id="PPS_Pop_${this.options.PickerHash}"]`);
+			if (tmpStray) { tmpStray.remove(); }
+		}
+	}
+
+	/** Reflect the open/closed state on the widget container. Also stamp the pop element itself, since a
+	 *  portaled panel is no longer a descendant of `.pps-open` and the stylesheet's open rule can't reach
+	 *  it — its visibility keys off `pps-pop-open` instead, so a stray portaled panel stays hidden. */
 	_paintOpen()
 	{
 		const tmpRoot = document.getElementById(`PPS_${this.options.PickerHash}`);
 		if (tmpRoot) { tmpRoot.classList.toggle('pps-open', !!this._open); }
+		const tmpPop = this._popElement();
+		if (tmpPop) { tmpPop.classList.toggle('pps-pop-open', !!this._open); }
 	}
 
 	/** Re-render only the option list (keeps the search input + its focus intact). */
@@ -1024,12 +1160,15 @@ class PictViewPicker extends libPictView
 		this._setValue(tmpValues);
 		this._renderValue();
 		this._renderList();
-		const tmpSearch = document.getElementById(`PPS_Search_${this.options.PickerHash}`);
-		if (tmpSearch) { tmpSearch.focus(); }
 		if (typeof this.options.OnChange === 'function')
 		{
 			this.options.OnChange(tmpValues, this.getSelectedRecords());
 		}
+		// Focus AFTER OnChange: a host that re-marshals inside its handler re-renders the widget and would
+		// blow away a focus set before it. onAfterRender also restores focus while open, covering the
+		// re-render that does happen; this covers the common case where it does not.
+		const tmpSearch = document.getElementById(`PPS_Search_${this.options.PickerHash}`);
+		if (tmpSearch) { tmpSearch.focus(); }
 	}
 
 	/**
@@ -1136,7 +1275,13 @@ class PictViewPicker extends libPictView
 		// after a multi-select committed its value). The default CSS anchoring survives a render on its
 		// own, but a portaled panel does not: the render builds a fresh one inside the widget and leaves
 		// the portaled copy orphaned on <body>. Re-deciding the mode sweeps the orphan and re-portals.
-		if (this._open) { this._applyAnchorMode(); }
+		if (this._open)
+		{
+			this._applyAnchorMode();
+			// Restore the search focus the re-render just dropped, so typing survives a marshal mid-search.
+			const tmpSearch = document.getElementById(`PPS_Search_${this.options.PickerHash}`);
+			if (tmpSearch && document.activeElement !== tmpSearch) { tmpSearch.focus(); }
+		}
 		return super.onAfterRender(pRenderable);
 	}
 }

@@ -294,24 +294,28 @@ document, so the browser keeps travelling it with the page exactly like the defa
 `position: fixed` would resolve against the viewport and strand the panel the moment you scrolled.
 Both paths therefore anchor once and need no repositioning, and neither uses an event listener.
 
+The portal engages only when the clip would **actually reach the panel** — not merely because an
+overflow ancestor exists. On open the view finds the nearest clipping ancestor and projects where the
+panel would open (downward from the control, up to its max height); if that box fits inside the clipper
+it stays on the CSS path, and only a dropdown near a clipping edge — the case the portal is for —
+moves out. So `overflow: hidden` used for rounded corners or text-ellipsis, or a tall scroll container
+the dropdown clears with room to spare, does not force a portal. It is still one measurement at open,
+with no listeners.
+
 While portaled the panel is pinned to the control's width and clamped to the room actually available,
 so its list scrolls in place rather than running off the screen. The mode is re-decided on each open
-and on any re-render that happens while open; closing brings the panel back inside its widget. In
-practice the portal engages inside scrolling table wrappers and dialog bodies, while a form row that
-sets no `overflow` anywhere above the control stays on the CSS path.
+and on any re-render that happens while open; closing brings the panel back inside its widget.
 
-Two things to know about the portal path:
-
-- It tracks **page** scroll, not scrolling *inside* the clipping container itself. Scrolling that
-  container while the dropdown is open would leave the panel behind — in practice unreachable, since
-  the open dropdown's backdrop covers the viewport and takes the wheel and the container's scrollbar.
-- A portaled panel is no longer a descendant of the host's markup, so CSS custom properties scoped to
-  a container above it stop applying and its `--theme-color-*` tokens fall back to their built-in
-  defaults. Define those tokens at `:root` (or on `body`) and both paths paint identically.
+One thing to know about the portal path: it tracks **page** scroll, not scrolling *inside* the clipping
+container itself. Scrolling that container while the dropdown is open would leave the panel behind — in
+practice unreachable, since the open dropdown's backdrop covers the viewport and takes the wheel and the
+container's scrollbar. (Theme tokens are not a concern: a portaled panel carries the host's resolved
+`--theme-color-*` values across with it, so it paints identically whether the tokens are defined at
+`:root` or scoped to a container above the control.)
 
 ## Theming
 
-The widget paints from `--theme-color-*` tokens with sensible hex fallbacks, so it inherits the host app's theme. Define them at `:root` or on `body` rather than on a container around the picker — a dropdown that portals out (see [Dropdown anchoring](#dropdown-anchoring)) leaves a scoped container behind and would fall back to the defaults. Relevant tokens: `--theme-color-brand-primary`, `--theme-color-text-primary`, `--theme-color-text-muted`, `--theme-color-border-default`, `--theme-color-border-light`, `--theme-color-border-strong`, `--theme-color-background-primary`, `--theme-color-background-panel`, `--theme-color-background-tertiary`.
+The widget paints from `--theme-color-*` tokens with sensible hex fallbacks, so it inherits the host app's theme. Define them at `:root`, on `body`, or on a container around the picker — a dropdown that portals out (see [Dropdown anchoring](#dropdown-anchoring)) carries the resolved values with it, so a scoped container paints the same as `:root`. Relevant tokens: `--theme-color-brand-primary`, `--theme-color-text-primary`, `--theme-color-text-secondary`, `--theme-color-text-muted`, `--theme-color-border-default`, `--theme-color-border-light`, `--theme-color-border-strong`, `--theme-color-background-primary`, `--theme-color-background-panel`, `--theme-color-background-tertiary`.
 
 ## Example application
 
