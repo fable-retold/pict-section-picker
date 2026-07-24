@@ -76,6 +76,14 @@
 					<button type="button" class="demo-btn" onclick="_Pict.PictApplication.setProgCountry('fr')">Set France</button>
 					<button type="button" class="demo-btn" onclick="_Pict.PictApplication.setProgCountry('')">Clear</button>
 				</div>
+				<p class="demo-note">
+					This one has <code>AllowClear</code>, so an inline × appears on the control whenever a value is
+					set — and that × renders <em>outside</em> the value area, where a targeted re-seed can&rsquo;t
+					repaint it. So watch it track: <strong>Set Japan</strong> (empty&rarr;set) and <strong>Clear</strong>
+					(set&rarr;empty) repaint the whole control so the × can appear or go, while <strong>Set France</strong>
+					(set&rarr;set) changes nothing outside the value area and stays on the fast path.
+					<span id="ProgReflectMode" class="demo-mode demo-mode-idle">no setValue yet</span>
+				</p>
 				<div id="ProgTagsPicker" style="margin-top: 0.75rem;"></div>
 				<div class="demo-btns">
 					<button type="button" class="demo-btn" onclick="_Pict.PictApplication.setProgTags(['urgent','review'])">Set [urgent, review]</button>
@@ -119,6 +127,26 @@
 				document coordinates. It stays absolute rather than fixed, so this one <em>also</em> rides the page:
 				open it and scroll, and it should stay glued just like the one above — while still escaping the clip.
 				<span id="AnchorClippedMode" class="demo-mode demo-mode-idle">not opened yet</span>
+			</p>
+
+			<!-- Nested clippers: the panel clears the inner card but not the outer pane. Checking only the
+			     nearest clipping ancestor would call this safe and let the pane cut the dropdown. -->
+			<div class="demo-scrollpane-v" style="margin-top: 1rem;">
+				<div class="demo-clip-card">
+					<div id="AnchorNestedPicker"></div>
+					<p class="demo-note" style="margin-top: 0.6rem;">
+						This card is 900px tall with <code>overflow: hidden</code> (rounded corners), sitting in a
+						220px pane that scrolls. The dropdown fits inside the <em>card</em> with room to spare — so
+						the innermost clipper alone says &ldquo;no problem&rdquo; — but the <em>pane</em> is what
+						actually cuts it off.
+					</p>
+				</div>
+			</div>
+			<p class="demo-note">
+				Nested clipping: the picker walks <em>every</em> clipping ancestor and portals if any one of them
+				would bite, so a roomy inner wrapper can&rsquo;t excuse a tighter one further out. Open it — the
+				panel should escape the pane entirely rather than being sliced at its edge.
+				<span id="AnchorNestedMode" class="demo-mode demo-mode-idle">not opened yet</span>
 			</p>
 
 			<!-- Single-active: two participants + one opt-out, to prove the opt-out is untouched either way. -->

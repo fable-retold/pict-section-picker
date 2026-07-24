@@ -13,6 +13,7 @@ declare class PictViewPicker extends libPictView {
     _searchTimer: NodeJS.Timeout;
     _selectedText: any;
     _portaled: boolean;
+    _renderedShape: string;
     _values: any[];
     _selectedRecords: {};
     /** @return {boolean} True when a DataProvider function is configured (async/server mode). */
@@ -52,6 +53,17 @@ declare class PictViewPicker extends libPictView {
      * select()/clearValue() keep their own full renders — this is only the setValue path.
      */
     _reflectValue(): void;
+    /**
+     * A signature of the render-affecting state that the targeted refresh does NOT repaint. Exactly three
+     * things in the control template live outside #PPS_Value_ and #PPS_List_: the root's pps-multi /
+     * pps-readonly modifier classes, the panel's search box (SearchSlot), and the control's inline clear ×
+     * (ClearSlot — gated on VALUE PRESENCE, so it moves without any config change). When this differs from
+     * what is currently painted, _reflectValue must fall back to a full render.
+     *
+     * Extend this if the control template ever grows another slot outside those two containers.
+     * @return {string}
+     */
+    _shapeSignature(): string;
     /**
      * Ensure each value has a {Value,Text} in _selectedRecords — from the current source rows when
      * present, else (async mode) fetched via ResolveValue and painted in when it resolves.
@@ -163,10 +175,10 @@ declare class PictViewPicker extends libPictView {
      */
     _restorePop(pPop: HTMLElement): void;
     /**
-     * Whether this open should portal the panel out to <body>: true only when the control sits inside a
-     * clipping ancestor AND that clip would actually reach the panel (_clipBites). A dropdown with room
-     * to open in place stays on the CSS path even inside a scroll container — an overflow ancestor alone
-     * is not enough. Judged from the control, which never moves.
+     * Whether this open should portal the panel out to <body>: true when ANY clipping ancestor above the
+     * control would actually cut the panel (_clipBites). A dropdown with room to open in place stays on
+     * the CSS path even inside a scroll container — an overflow ancestor alone is not enough — but one
+     * roomy clipper does not excuse a tighter one further out. Judged from the control, which never moves.
      * @param {HTMLElement} pControl
      * @return {boolean}
      */

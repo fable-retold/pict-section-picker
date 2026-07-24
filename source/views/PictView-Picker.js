@@ -108,8 +108,9 @@ const _DEFAULT_CONFIGURATION =
 		{
 			// The inline clear × (AllowClear) — a control-level adornment between the value area and
 			// the chevron, so it centers next to the text (the value area's children stack as blocks).
-			// Value PRESENCE only changes through full renders (select / clearValue / setValue), so it
-			// never goes stale outside the value-area's targeted repaint. stopPropagation so clearing
+			// It sits OUTSIDE #PPS_Value_, so the targeted repaint can't refresh it — and its presence
+			// tracks the VALUE. _shapeSignature() therefore includes it, which forces setValue onto a
+			// full render whenever it would appear or disappear. stopPropagation so clearing
 			// never bubbles into the control's open/close toggle — mirrors the multi-chip remove ×.
 			Hash: 'Pict-Section-Picker-ClearX',
 			Template: /*html*/`
@@ -278,6 +279,9 @@ class PictViewPicker extends libPictView
 		// True while the panel is portaled out to <body> because a clipping ancestor would cut it off,
 		// rather than anchored in place by CSS. Decided per open by _applyAnchorMode().
 		this._portaled = false;
+		// The _shapeSignature() of what is currently painted, stamped by onAfterRender. Null until the
+		// first render, so a setValue before the widget exists falls through to a full build.
+		this._renderedShape = null;
 		// Multi-mode state: the authoritative {Value,Text} for each selected value, keyed by String(Value),
 		// so a chip keeps its label even after the search results that produced it have scrolled away.
 		this._values = [];
@@ -444,12 +448,37 @@ class PictViewPicker extends libPictView
 	_reflectValue()
 	{
 		const tmpLive = (typeof document !== 'undefined') && !!document.getElementById(`PPS_${this.options.PickerHash}`);
-		if (!tmpLive) { this.render(); return; }
+		// Full build when the widget isn't in the DOM yet, and a full render whenever anything OUTSIDE the
+		// value area / list would change — the targeted path cannot repaint those (see _shapeSignature).
+		if (!tmpLive || (this._shapeSignature() !== this._renderedShape)) { this.render(); return; }
 		this._renderValue();
 		// Refresh the list too, even while closed: its selected-row checkmark tracks the value, and the
 		// list container is a hidden sibling of the search box + pop, so rebuilding it keeps the mark in
 		// step on the NEXT open without tearing down the search box (losing focus) or orphaning a portal.
 		this._renderList();
+	}
+
+	/**
+	 * A signature of the render-affecting state that the targeted refresh does NOT repaint. Exactly three
+	 * things in the control template live outside #PPS_Value_ and #PPS_List_: the root's pps-multi /
+	 * pps-readonly modifier classes, the panel's search box (SearchSlot), and the control's inline clear ×
+	 * (ClearSlot — gated on VALUE PRESENCE, so it moves without any config change). When this differs from
+	 * what is currently painted, _reflectValue must fall back to a full render.
+	 *
+	 * Extend this if the control template ever grows another slot outside those two containers.
+	 * @return {string}
+	 */
+	_shapeSignature()
+	{
+		const tmpMulti = this._isMulti();
+		const tmpValue = tmpMulti ? undefined : this.getValue();
+		const tmpHasValue = (tmpValue !== undefined && tmpValue !== null && tmpValue !== '');
+		return [
+			tmpMulti,
+			!!this.options.ReadOnly,
+			!!this.options.Searchable,
+			(!tmpMulti && this.options.AllowClear === true && tmpHasValue),
+		].join('|');
 	}
 
 	/**
@@ -902,18 +931,26 @@ class PictViewPicker extends libPictView
 	}
 
 	/**
-	 * Whether this open should portal the panel out to <body>: true only when the control sits inside a
-	 * clipping ancestor AND that clip would actually reach the panel (_clipBites). A dropdown with room
-	 * to open in place stays on the CSS path even inside a scroll container — an overflow ancestor alone
-	 * is not enough. Judged from the control, which never moves.
+	 * Whether this open should portal the panel out to <body>: true when ANY clipping ancestor above the
+	 * control would actually cut the panel (_clipBites). A dropdown with room to open in place stays on
+	 * the CSS path even inside a scroll container — an overflow ancestor alone is not enough — but one
+	 * roomy clipper does not excuse a tighter one further out. Judged from the control, which never moves.
 	 * @param {HTMLElement} pControl
 	 * @return {boolean}
 	 */
 	_shouldPortal(pControl)
 	{
-		const tmpClipper = this._clippingAncestor(pControl);
-		if (!tmpClipper) { return false; }
-		return this._clipBites(pControl, tmpClipper);
+		// EVERY clipping ancestor, not just the nearest: a panel can sit comfortably inside a large
+		// overflow:hidden wrapper (a rounded-corner card, say) and still be cut by that wrapper's own
+		// scrolling ancestor. Testing only the innermost would call that safe. _clippingAncestor starts
+		// from pElement.parentElement, so feeding it the clipper it just returned continues the walk out.
+		let tmpClipper = this._clippingAncestor(pControl);
+		while (tmpClipper)
+		{
+			if (this._clipBites(pControl, tmpClipper)) { return true; }
+			tmpClipper = this._clippingAncestor(tmpClipper);
+		}
+		return false;
 	}
 
 	/**
@@ -1270,6 +1307,10 @@ class PictViewPicker extends libPictView
 	onAfterRender(pRenderable)
 	{
 		if (this.pict.CSSMap && typeof this.pict.CSSMap.injectCSS === 'function') { this.pict.CSSMap.injectCSS(); }
+		// Stamp what this render painted, so a later setValue can tell whether a targeted refresh is
+		// still sufficient (_reflectValue). Targeted refreshes don't change the shape, so they don't
+		// restamp it — only a full render does.
+		this._renderedShape = this._shapeSignature();
 		this._paintOpen();
 		// Re-anchor when we re-render WHILE open (RenderMethod 'replace' — e.g. a host form re-marshalling
 		// after a multi-select committed its value). The default CSS anchoring survives a render on its

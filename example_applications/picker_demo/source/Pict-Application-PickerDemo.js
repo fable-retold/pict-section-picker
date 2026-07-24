@@ -224,9 +224,14 @@ class PickerDemoApplication extends libPictApplication
 				ValueAddress: 'AppData.Demo.ProgCountry',
 				Placeholder: 'Set me with the buttons →',
 				Options: _Countries,
+				// AllowClear puts an inline × on the control whenever a value is set. That × renders OUTSIDE
+				// the value area, so it's the thing a targeted re-seed can't repaint — which makes these
+				// buttons a live check that setValue falls back to a full render when presence flips.
+				AllowClear: true,
 				OnChange: () => this._showProgrammatic(),
 			});
 		this.pict.views['ProgCountryPicker'].render();
+		this._watchReflectPath('ProgCountryPicker', '#ProgReflectMode');
 
 		this.pict.AppData.Demo.ProgTags = [];
 		tmpPicker.createPicker('ProgTagsPicker',
@@ -270,6 +275,18 @@ class PickerDemoApplication extends libPictApplication
 			});
 		this.pict.views['AnchorClippedPicker'].render();
 		this._watchAnchorMode('AnchorClippedPicker', '#AnchorClippedMode');
+
+		// Nested clippers: a tall overflow:hidden card (the panel clears it) inside a short scrolling pane
+		// (the panel does not). Only checking the nearest ancestor would leave this one clipped.
+		tmpPicker.createPicker('AnchorNestedPicker',
+			{
+				DestinationAddress: '#AnchorNestedPicker',
+				ValueAddress: 'AppData.Demo.AnchorNested',
+				Placeholder: 'Open me — I clear the card, not the pane…',
+				Options: _Countries,
+			});
+		this.pict.views['AnchorNestedPicker'].render();
+		this._watchAnchorMode('AnchorNestedPicker', '#AnchorNestedMode');
 
 		// --- Single-active fleet: two opted in, one deliberately not. The opt-out must be untouched in
 		//     both directions — it neither closes a participant nor is closed by one. ---
@@ -354,6 +371,35 @@ class PickerDemoApplication extends libPictApplication
 			{
 				tmpElement[0].className = `demo-mode ${tmpPortaled ? 'demo-mode-fixed' : 'demo-mode-css'}`;
 			}
+		};
+	}
+
+	/**
+	 * Badge which path the last programmatic setValue took: a targeted refresh (value area + list only)
+	 * or a full render. A full render is required whenever something outside those — here the inline
+	 * clear × — would change, so this makes the trade-off visible: setting over an existing value stays
+	 * on the fast path, while empty↔set repaints the control so the × can appear or go.
+	 * @param {string} pViewHash @param {string} pBadgeSelector
+	 */
+	_watchReflectPath(pViewHash, pBadgeSelector)
+	{
+		const tmpView = this.pict.views[pViewHash];
+		const fRender = tmpView.render.bind(tmpView);
+		let tmpFullRender = false;
+		tmpView.render = () => { tmpFullRender = true; return fRender(); };
+		const fSetValue = tmpView.setValue.bind(tmpView);
+		tmpView.setValue = (pValue) =>
+		{
+			tmpFullRender = false;
+			const tmpResult = fSetValue(pValue);
+			this.pict.ContentAssignment.assignContent(pBadgeSelector,
+				tmpFullRender ? 'full render (shape changed)' : 'targeted refresh (fast path)');
+			const tmpElement = this.pict.ContentAssignment.getElement(pBadgeSelector);
+			if (tmpElement && tmpElement[0])
+			{
+				tmpElement[0].className = `demo-mode ${tmpFullRender ? 'demo-mode-fixed' : 'demo-mode-css'}`;
+			}
+			return tmpResult;
 		};
 	}
 

@@ -482,12 +482,126 @@ suite
 				{
 					let tmpFullRenders = 0;
 					let tmpValueRefreshes = 0;
+					// Stand in for the render that already painted this widget: onAfterRender stamps the shape,
+					// and the stubbed render below never runs the real one. Without this the guard would
+					// (correctly) see an unpainted shape and force a full render.
+					tmpView._renderedShape = tmpView._shapeSignature();
 					tmpView.render = () => { tmpFullRenders++; };
 					tmpView._renderValue = () => { tmpValueRefreshes++; };
-					// Root #PPS_ReseedPicker is live (withPopElement built it), so the re-seed is targeted.
+					// Root #PPS_ReseedPicker is live (withPopElement built it) and this picker has no AllowClear,
+					// so setting a value changes nothing outside the value area → the re-seed stays targeted.
 					tmpView.setValue('ca');
 					Expect(tmpFullRenders, 'no teardown render while live').to.equal(0);
 					Expect(tmpValueRefreshes, 'value area refreshed instead').to.equal(1);
+					return fDone();
+				});
+			}
+		);
+		test
+		(
+			'a roomy clipper does not excuse a tighter one further out (every ancestor is checked)',
+			(fDone) =>
+			{
+				// The nested case: the panel clears the big overflow:hidden card it sits in, but that card
+				// lives in a short scrolling pane that WOULD cut it. Testing only the nearest clipper called
+				// this safe and let the pane clip the dropdown.
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('NestedClipPicker', { Options: COUNTRY_OPTIONS });
+				const tmpPane = document.createElement('div');   // outer: short + scrolls → bites
+				tmpPane.style.overflowY = 'auto';
+				const tmpCard = document.createElement('div');   // inner: tall + hidden → does NOT bite
+				tmpCard.style.overflow = 'hidden';
+				const tmpControl = document.createElement('div');
+				tmpCard.appendChild(tmpControl);
+				tmpPane.appendChild(tmpCard);
+				document.body.appendChild(tmpPane);
+
+				tmpControl.getBoundingClientRect = () => ({ top: 100, bottom: 130, left: 50, right: 250, width: 200, height: 30 });
+				// The card is 900px tall, so a 360px panel below the control fits inside it with room to spare…
+				tmpCard.getBoundingClientRect = () => ({ top: 90, bottom: 990, left: 40, right: 400, width: 360, height: 900 });
+				// …but the pane only shows 220px, so the panel runs straight past its bottom edge.
+				tmpPane.getBoundingClientRect = () => ({ top: 90, bottom: 310, left: 40, right: 400, width: 360, height: 220 });
+
+				Expect(tmpView._clipBites(tmpControl, tmpCard), 'inner card alone would say "fits"').to.equal(false);
+				Expect(tmpView._clipBites(tmpControl, tmpPane), 'the outer pane is what cuts it').to.equal(true);
+				Expect(tmpView._shouldPortal(tmpControl), 'so we must still portal').to.equal(true);
+
+				document.body.removeChild(tmpPane);
+				return fDone();
+			}
+		);
+		test
+		(
+			'nested clippers that both have room keep the CSS path (no needless portal)',
+			(fDone) =>
+			{
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('NestedRoomyPicker', { Options: COUNTRY_OPTIONS });
+				const tmpPane = document.createElement('div');
+				tmpPane.style.overflowY = 'auto';
+				const tmpCard = document.createElement('div');
+				tmpCard.style.overflow = 'hidden';
+				const tmpControl = document.createElement('div');
+				tmpCard.appendChild(tmpControl);
+				tmpPane.appendChild(tmpCard);
+				document.body.appendChild(tmpPane);
+
+				tmpControl.getBoundingClientRect = () => ({ top: 100, bottom: 130, left: 50, right: 250, width: 200, height: 30 });
+				tmpCard.getBoundingClientRect = () => ({ top: 90, bottom: 990, left: 40, right: 400, width: 360, height: 900 });
+				tmpPane.getBoundingClientRect = () => ({ top: 80, bottom: 1200, left: 30, right: 420, width: 390, height: 1120 });
+
+				Expect(tmpView._shouldPortal(tmpControl), 'both roomy → stay in place').to.equal(false);
+
+				document.body.removeChild(tmpPane);
+				return fDone();
+			}
+		);
+		test
+		(
+			'a re-seed that flips the inline clear × does a full render (the targeted path cannot repaint it)',
+			(fDone) =>
+			{
+				// ClearSlot renders OUTSIDE #PPS_Value_ and is gated on VALUE PRESENCE, so an empty→set
+				// setValue has to fall back to a full render or the × never appears.
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('ClearShapePicker', { Options: COUNTRY_OPTIONS, AllowClear: true });
+				withPopElement(tmpView, () =>
+				{
+					let tmpFullRenders = 0;
+					tmpView._renderedShape = tmpView._shapeSignature();   // stands in for the paint already on screen
+					tmpView.render = () => { tmpFullRenders++; };
+
+					tmpView.setValue('ca');            // empty → set: the × must appear
+					Expect(tmpFullRenders, 'empty→set repaints the control').to.equal(1);
+
+					// Re-stamp as the real render would have, then a set→set re-seed (the common marshal).
+					tmpView._renderedShape = tmpView._shapeSignature();
+					tmpView.setValue('mx');
+					Expect(tmpFullRenders, 'set→set stays on the fast path').to.equal(1);
+
+					tmpView.setValue('');              // set → empty: the × must go
+					Expect(tmpFullRenders, 'set→empty repaints the control').to.equal(2);
+					return fDone();
+				});
+			}
+		);
+		test
+		(
+			'a config change (ReadOnly) forces a full render on the next re-seed',
+			(fDone) =>
+			{
+				// createPicker re-assigns options on every marshal, so a flipped ReadOnly lands in options —
+				// but pps-readonly lives on the root, which the targeted path never touches.
+				const tmpProvider = newProvider();
+				const tmpView = tmpProvider.createPicker('ReadOnlyShapePicker', { Options: COUNTRY_OPTIONS });
+				withPopElement(tmpView, () =>
+				{
+					let tmpFullRenders = 0;
+					tmpView._renderedShape = tmpView._shapeSignature();
+					tmpView.render = () => { tmpFullRenders++; };
+					tmpView.options.ReadOnly = true;
+					tmpView.setValue('ca');
+					Expect(tmpFullRenders, 'readonly flip repaints the root').to.equal(1);
 					return fDone();
 				});
 			}

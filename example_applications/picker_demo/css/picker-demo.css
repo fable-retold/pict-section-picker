@@ -83,6 +83,27 @@ h1 {
 	padding: 0.75rem;
 	background: #fbfcfd;
 }
+/* The NESTED case: a short vertically-scrolling pane holding a TALL rounded card that clips for its
+   corners. The panel clears the card easily (the card is 900px), so testing only the innermost clipper
+   would call this safe — while the 220px pane is what actually cuts the dropdown. Every clipping
+   ancestor has to be measured, not just the nearest. */
+.demo-scrollpane-v {
+	max-height: 220px;
+	overflow-y: auto;
+	overflow-x: hidden;
+	border: 1px dashed #c2c9d2;
+	border-radius: 8px;
+	padding: 0.75rem;
+	background: #fbfcfd;
+}
+.demo-clip-card {
+	height: 900px;
+	overflow: hidden;
+	border: 1px solid #e2e6ec;
+	border-radius: 10px;
+	padding: 0.75rem;
+	background: #fff;
+}
 .demo-scrollpane table {
 	border-collapse: collapse;
 	width: 100%;
