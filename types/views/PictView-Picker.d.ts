@@ -45,22 +45,18 @@ declare class PictViewPicker extends libPictView {
      */
     setValue(pValue: any): PictViewPicker;
     /**
-     * Reflect the current value into the DOM after a programmatic setValue. The first call — widget not
-     * yet in the DOM — does the full build; once the widget is live it refreshes the value area and the
-     * option list (whose selected-row checkmark tracks the value) but nothing else. A form host re-runs
-     * the mount + setValue on every marshal, and a full render there would rebuild the search box
-     * (dropping a mid-search focus) and orphan a portaled panel; the targeted path avoids both.
+     * Reflect a programmatic setValue into the DOM. Full render when the widget isn't live yet, or when
+     * _shapeSignature() shows something outside the value area / list changed; otherwise just repaint
+     * those two (the list's checkmark tracks the value). The targeted path is what lets a form marshal
+     * re-seed on every solve without tearing down the search box (losing focus) or orphaning a portal.
      * select()/clearValue() keep their own full renders — this is only the setValue path.
      */
     _reflectValue(): void;
     /**
-     * A signature of the render-affecting state that the targeted refresh does NOT repaint. Exactly three
-     * things in the control template live outside #PPS_Value_ and #PPS_List_: the root's pps-multi /
-     * pps-readonly modifier classes, the panel's search box (SearchSlot), and the control's inline clear ×
-     * (ClearSlot — gated on VALUE PRESENCE, so it moves without any config change). When this differs from
-     * what is currently painted, _reflectValue must fall back to a full render.
-     *
-     * Extend this if the control template ever grows another slot outside those two containers.
+     * Signature of the render-affecting state the targeted refresh CANNOT repaint — the three things that
+     * render outside #PPS_Value_ / #PPS_List_: the root's pps-multi/pps-readonly classes, the search box,
+     * and the inline clear × (gated on value presence, so it moves with no config change). _reflectValue
+     * full-renders when this changes. Extend it if the control template grows another such slot.
      * @return {string}
      */
     _shapeSignature(): string;
@@ -125,106 +121,55 @@ declare class PictViewPicker extends libPictView {
     /** Open the dropdown and focus the search box. With the opt-in SingleActivePicker option, closes
      *  any open sibling picker first — one active dropdown per page. */
     open(): void;
-    /**
-     * Take the provider's single-active slot, closing whichever sibling holds it. Only pickers that opted
-     * in participate — a picker with SingleActivePicker off neither claims the slot nor is closed by one
-     * that does. The slot holds a HASH, not a view, and lives on the provider rather than the module, so
-     * two pict instances sharing this module can't close each other's dropdowns.
-     */
+    /** Take the provider's single-active slot, closing whichever sibling holds it. Opt-in only (an off
+     *  picker neither claims nor is closed). The slot holds a hash on the provider, so two pict instances
+     *  sharing this module can't cross-close. */
     _claimActivePicker(): void;
-    /**
-     * The dropdown panel, wherever it currently lives — inside its widget, or out on <body> while
-     * portaled. Resolved by position rather than by id: a re-render can briefly leave two panels sharing
-     * the id (the fresh one in the widget, the portaled one still on body), and which of those
-     * getElementById hands back is not something to depend on. The in-widget panel always wins, because
-     * after a re-render it is the live one and any portaled copy is a leftover.
-     * @return {HTMLElement|null}
-     */
+    /** The pop wherever it lives (in-widget or portaled). By position not id: a re-render can briefly
+     *  leave two sharing the id, and the in-widget copy is the live one. @return {HTMLElement|null} */
     _popElement(): HTMLElement | null;
-    /**
-     * Choose the dropdown's anchoring, once per open. The default is CSS-only: .pps-pop is absolute
-     * against .pps (position:relative), so it travels with the control on scroll for free. That breaks
-     * when an ancestor clips (overflow != visible) — a scrolling table wrapper, a dialog body — and such
-     * a container can't be un-clipped in CSS, since an overflow:auto axis forces the other off `visible`.
-     *
-     * The escape is to give the panel a containing block OUTSIDE the clip: an overflow ancestor only
-     * clips an absolutely positioned box when it sits in that box's containing-block chain. So we move
-     * the panel out to <body> and place it in document coordinates. It stays `absolute` on purpose —
-     * absolute against the document means the browser keeps it travelling with the page on scroll, so
-     * this path needs no repositioning either. Clipping is judged from the CONTROL, which never moves;
-     * testing the panel would flip-flop, since a portaled panel has no clipping ancestors by definition.
-     *
-     * We portal only when the clip would ACTUALLY reach the panel (_shouldPortal): a dropdown with room
-     * to open in place stays on the cheap CSS path even inside a scroll container, keeping its scoped
-     * theme tokens and its inner-container scroll tracking. Only one near a clipping edge portals — the
-     * one case where the portal is the right answer — so an overflow ancestor is not by itself enough.
-     */
+    /** Pick this open's anchoring (see states above): portal when _shouldPortal finds a clipping ancestor
+     *  that would cut the panel, else CSS. Judged from the control, which never moves — a portaled panel
+     *  has no clipping ancestors, so testing it would flip-flop. */
     _applyAnchorMode(): void;
-    /**
-     * Move the panel out to <body> and place it against the control in document coordinates (viewport
-     * rect + scroll offset), flipping above when the room below is short. Width is pinned to the
-     * control's, since the panel no longer inherits it by sitting inside the widget.
-     * @param {HTMLElement} pPop
-     */
+    /** Move the panel to <body> and place it against the control in document coords (viewport rect +
+     *  scroll), flipping above when room below is short. Width is pinned since it no longer inherits the
+     *  widget's. @param {HTMLElement} pPop */
     _portalPop(pPop: HTMLElement): void;
-    /**
-     * Put a portaled panel back inside its widget and drop everything the portal wrote. Also the orphan
-     * sweeper: a re-render rebuilds .pps with a fresh panel, so a portaled one left on <body> is stale
-     * and must be discarded rather than re-homed.
-     * @param {HTMLElement} pPop
-     */
+    /** Re-home a portaled panel and drop everything the portal wrote. Doubles as the orphan sweeper: if a
+     *  re-render already put a fresh panel in the widget, the portaled one is stale and gets discarded.
+     *  @param {HTMLElement} pPop */
     _restorePop(pPop: HTMLElement): void;
-    /**
-     * Whether this open should portal the panel out to <body>: true when ANY clipping ancestor above the
-     * control would actually cut the panel (_clipBites). A dropdown with room to open in place stays on
-     * the CSS path even inside a scroll container — an overflow ancestor alone is not enough — but one
-     * roomy clipper does not excuse a tighter one further out. Judged from the control, which never moves.
-     * @param {HTMLElement} pControl
-     * @return {boolean}
-     */
+    /** Portal when ANY clipping ancestor would actually cut the panel (_clipBites) — an overflow ancestor
+     *  alone isn't enough, but a roomy inner clipper doesn't excuse a tighter one further out.
+     *  @param {HTMLElement} pControl @return {boolean} */
     _shouldPortal(pControl: HTMLElement): boolean;
-    /**
-     * The nearest ancestor between the element and the body that establishes an overflow clip (overflow
-     * on any axis != visible), or null. Stops at body: the document's own scrolling is what the absolute
-     * anchoring rides on, not a clip.
-     * @param {HTMLElement} pElement
-     * @return {HTMLElement|null}
-     */
+    /** Nearest ancestor (up to, not including, body) with an overflow clip on any axis, or null. Stops at
+     *  body because the document's own scroll is what the absolute anchoring rides on, not a clip.
+     *  @param {HTMLElement} pElement @return {HTMLElement|null} */
     _clippingAncestor(pElement: HTMLElement): HTMLElement | null;
     /** True when the control has any overflow-clipping ancestor. Thin boolean over _clippingAncestor;
      *  the anchor decision uses _shouldPortal, which also weighs whether the clip reaches the panel.
      *  @param {HTMLElement} pElement @return {boolean} */
     _hasClippingAncestor(pElement: HTMLElement): boolean;
-    /**
-     * Whether the clipper would cut the panel if it opened in place. The CSS path always opens DOWNWARD
-     * (top: calc(100% + gap)) and never flips, clamped to its own max-height — so project that worst-case
-     * box below the control and ask whether any edge falls outside the clipper's box. When it fits, the
-     * CSS path is safe; when it doesn't, only the portal (which can flip above and escape) will do. A
-     * pixel of slack keeps a flush edge from forcing a needless portal on sub-pixel rounding.
-     * @param {HTMLElement} pControl @param {HTMLElement} pClipper @return {boolean}
-     */
+    /** Would the clipper cut the panel if it opened in place? The CSS path always opens downward and never
+     *  flips, so project that worst-case box (control bottom + gap, up to max height) and test whether any
+     *  edge falls outside the clipper. 1px slack avoids a needless portal on a flush edge.
+     *  @param {HTMLElement} pControl @param {HTMLElement} pClipper @return {boolean} */
     _clipBites(pControl: HTMLElement, pClipper: HTMLElement): boolean;
-    /**
-     * Mark the dropdown closed: the transient open state, the provider's active-picker slot, and the
-     * loaded-results cache. Shared by every path that closes the dropdown (close(), a single-mode select,
-     * clearValue, createFromSearch) so none of them can leave a stale active-picker reference or serve
-     * results from a scope that has since changed.
-     */
+    /** The single close funnel (close, single-mode select, clearValue, createFromSearch): clears open
+     *  state, the provider's active-picker slot, and the results cache so nothing leaks a stale reference. */
     _markClosed(): void;
     /** Async mode: load + append the next page of results. */
     loadMore(): void;
     /** Close the dropdown. */
     close(): void;
-    /**
-     * Release everything this picker holds outside its own DOM subtree, for a host that tears the view
-     * down. pict-view has no destroy lifecycle, so this is opt-in — call it before dropping the view.
-     * The un-destroyed case is already harmless: a portaled panel is hidden unless `pps-pop-open` is set
-     * (so a stray one shows nothing), and its back-off / single-active state is released on close.
-     */
+    /** Opt-in teardown for a host that drops the view (pict-view has no destroy hook). _markClosed already
+     *  releases the single-active slot, re-homes/removes a portaled panel, and clears the back-off entry;
+     *  the un-destroyed case is harmless since a stray portaled pop stays hidden without pps-pop-open. */
     destroy(): void;
-    /** Reflect the open/closed state on the widget container. Also stamp the pop element itself, since a
-     *  portaled panel is no longer a descendant of `.pps-open` and the stylesheet's open rule can't reach
-     *  it — its visibility keys off `pps-pop-open` instead, so a stray portaled panel stays hidden. */
+    /** Reflect open/closed on the root (pps-open) and on the pop (pps-pop-open) — a portaled pop is outside
+     *  the root's rule, so it needs the class directly, which also keeps a stray one hidden. */
     _paintOpen(): void;
     /** Re-render only the option list (keeps the search input + its focus intact). */
     _renderList(): void;

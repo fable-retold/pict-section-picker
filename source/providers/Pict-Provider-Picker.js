@@ -65,20 +65,15 @@ const _PickerCSS = /*css*/`
 .pps-backdrop { position: fixed; inset: 0; z-index: 0; display: none; }
 .pps.pps-open .pps-backdrop { display: block; }
 .pps.pps-open .pps-control { position: relative; z-index: 1; }
-/* Anchored to the control's own box (.pps is position:relative), so the panel travels with the control
-   on page scroll for free — no measuring, no JS, no scroll listeners. This is the default because a
-   typical form-row wrapper sets no overflow, leaving nothing to clip the panel. */
+/* Default anchoring: absolute against the control's own box (.pps is position:relative), so the panel
+   rides page scroll for free — no measuring, no listeners. Works because a typical form row sets no
+   overflow to clip it. */
 .pps-pop { position: absolute; z-index: 40; top: calc(100% + 0.3rem); left: 0; right: 0; min-width: 200px; display: none; }
 .pps.pps-open .pps-pop { display: block; }
-/* Clipped-context fallback, applied by the view when a clipping ancestor (overflow != visible) would
-   actually cut the panel — a scrolling table wrapper, a dialog body. Such a container can't be
-   un-clipped in CSS (an overflow:auto axis forces the other axis off visible), so the view moves the
-   panel out to <body> and places it once in DOCUMENT coordinates. Still absolute, deliberately: an
-   absolute box on <body> resolves against the document, so the browser keeps it travelling with the
-   page on scroll, exactly like the default path. (position:fixed would resolve against the viewport and
-   strand the panel when the page scrolled.) Visibility keys off the pps-pop-open class rather than the
-   widget's .pps.pps-open rule, which can't reach a panel that no longer descends from the widget — so a
-   stray portaled panel (e.g. orphaned by a re-render) shows nothing until it is genuinely open. */
+/* Portal fallback, applied by the view when a clipping ancestor would cut the panel: it moves the pop to
+   <body> and places it in DOCUMENT coords. Still absolute (not fixed) so it rides scroll like the
+   default. On <body> it's outside the .pps.pps-open rule, so visibility keys off pps-pop-open — which
+   also keeps a stray/orphaned portaled pop hidden. */
 .pps-pop.pps-pop-portal { position: absolute; right: auto; display: none; }
 .pps-pop.pps-pop-portal.pps-pop-open { display: block; }
 .pps-panel { position: relative; z-index: 1; display: flex; flex-direction: column; max-height: min(60vh, 360px);
@@ -137,16 +132,13 @@ class PictProviderPicker extends libPictProvider
 		let tmpOptions = Object.assign({}, _DEFAULT_CONFIGURATION, pOptions);
 		super(pFable, tmpOptions, pServiceHash);
 
-		// Per-picker back-off bookkeeping, keyed by picker hash. This lives on the provider (a singleton
-		// with page lifetime) rather than in the DataProvider closure because createEntityPicker rebuilds
-		// that closure on EVERY call — and a form host re-mounts its pickers on every marshal, which would
-		// silently reset the state while the view's accumulated _loadedResults survived.
+		// Back-off bookkeeping, keyed by picker hash. On the provider (page-lived), not the DataProvider
+		// closure, which createEntityPicker rebuilds on every marshal-driven re-mount.
 		/** @type {Record<string, {Dropped: boolean, Term: string|null}>} */
 		this.backOffState = {};
 
-		// The hash of the picker whose dropdown is currently open, for the opt-in SingleActivePicker
-		// behavior. A hash (not a view reference) so nothing here retains a view, and provider-scoped so
-		// two pict instances on one page can't close each other's pickers.
+		// Hash of the picker whose dropdown is open (opt-in SingleActivePicker). A hash, not a view, and
+		// provider-scoped so two pict instances on a page can't cross-close.
 		/** @type {string|false} */
 		this.currentOpenPickerHash = false;
 
@@ -285,11 +277,9 @@ class PictProviderPicker extends libPictProvider
 		const tmpEntityTagFields = Array.isArray(pConfig.EntityTags) ? pConfig.EntityTags : false;
 		const tmpTextTemplate = pConfig.TextTemplate || false;
 
-		// Back-off state: once a page-0 search came back empty and was retried without the back-off set,
-		// later pages of the SAME term stay widened so "Load more" pages the widened set the user is
-		// actually looking at. A new page-0 search resets it. Held on the provider (keyed by picker hash)
-		// so it outlives this closure — createEntityPicker rebuilds the closure on every mount, and hosts
-		// re-mount on every marshal. With no key (direct API use) it falls back to closure-local state.
+		// Back-off state: after a page-0 search comes back empty and is retried without the back-off set,
+		// later pages of the SAME term stay widened (a new page-0 resets it). Held on the provider by hash
+		// so it survives this closure's marshal-time rebuild; no key (direct API use) = closure-local.
 		const tmpBackOff = pStateKey
 			? (this.backOffState[pStateKey] = this.backOffState[pStateKey] || { Dropped: false, Term: null })
 			: { Dropped: false, Term: null };
