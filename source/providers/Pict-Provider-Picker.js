@@ -65,10 +65,17 @@ const _PickerCSS = /*css*/`
 .pps-backdrop { position: fixed; inset: 0; z-index: 0; display: none; }
 .pps.pps-open .pps-backdrop { display: block; }
 .pps.pps-open .pps-control { position: relative; z-index: 1; }
-/* Fixed (viewport-anchored) + JS-positioned in open(), so no ancestor's overflow:hidden — a card, a
-   slide-out drawer, a scroll pane — can ever clip the dropdown, whatever the host's layout. */
-.pps-pop { position: fixed; z-index: 40; min-width: 200px; display: none; }
+/* Default anchoring: absolute against the control's own box (.pps is position:relative), so the panel
+   rides page scroll for free — no measuring, no listeners. Works because a typical form row sets no
+   overflow to clip it. */
+.pps-pop { position: absolute; z-index: 40; top: calc(100% + 0.3rem); left: 0; right: 0; min-width: 200px; display: none; }
 .pps.pps-open .pps-pop { display: block; }
+/* Portal fallback, applied by the view when a clipping ancestor would cut the panel: it moves the pop to
+   <body> and places it in DOCUMENT coords. Still absolute (not fixed) so it rides scroll like the
+   default. On <body> it's outside the .pps.pps-open rule, so visibility keys off pps-pop-open — which
+   also keeps a stray/orphaned portaled pop hidden. */
+.pps-pop.pps-pop-portal { position: absolute; right: auto; display: none; }
+.pps-pop.pps-pop-portal.pps-pop-open { display: block; }
 .pps-panel { position: relative; z-index: 1; display: flex; flex-direction: column; max-height: min(60vh, 360px);
 	background: var(--theme-color-background-panel, #fff); border: 1px solid var(--theme-color-border-default, #d7dce3);
 	border-radius: 10px; box-shadow: 0 10px 28px rgba(17, 24, 39, 0.14); overflow: hidden; }
@@ -107,6 +114,11 @@ const _DEFAULT_CONFIGURATION =
 
 	AutoInitialize: true,
 	AutoInitializeOrdinal: 0,
+
+	// Opt-in fleet default: when true, every picker this provider creates closes any open sibling on
+	// open (at most one dropdown on the page — select2 parity). Off by default so existing hosts see
+	// no behavior change; a per-picker SingleActivePicker in createPicker's config overrides it.
+	SingleActivePicker: false,
 };
 
 /**
@@ -119,6 +131,16 @@ class PictProviderPicker extends libPictProvider
 	{
 		let tmpOptions = Object.assign({}, _DEFAULT_CONFIGURATION, pOptions);
 		super(pFable, tmpOptions, pServiceHash);
+
+		// Back-off bookkeeping, keyed by picker hash. On the provider (page-lived), not the DataProvider
+		// closure, which createEntityPicker rebuilds on every marshal-driven re-mount.
+		/** @type {Record<string, {Dropped: boolean, Term: string|null}>} */
+		this.backOffState = {};
+
+		// Hash of the picker whose dropdown is open (opt-in SingleActivePicker). A hash, not a view, and
+		// provider-scoped so two pict instances on a page can't cross-close.
+		/** @type {string|false} */
+		this.currentOpenPickerHash = false;
 
 		if (this.pict && this.pict.CSSMap && typeof this.pict.CSSMap.addCSS === 'function')
 		{
@@ -139,6 +161,8 @@ class PictProviderPicker extends libPictProvider
 	 *   - Searchable {boolean} - show the search box (default true).
 	 *   - Options {Array<{Value:any, Text:string}>} - static option list.
 	 *   - OnChange {function} - optional callback invoked with the new value after a selection.
+	 *   - SingleActivePicker {boolean} - opt-in: opening this picker closes any open sibling
+	 *     (defaults from the provider's own SingleActivePicker option).
 	 * @return {any} The picker view instance.
 	 */
 	createPicker(pPickerHash, pConfig)
@@ -150,9 +174,13 @@ class PictProviderPicker extends libPictProvider
 				Searchable: true,
 				Placeholder: 'Select…',
 				Options: [],
+				// Seed the provider-level fleet default; an explicit per-picker value overrides it.
+				SingleActivePicker: !!this.options.SingleActivePicker,
 			},
 			pConfig || {},
-			{ PickerHash: pPickerHash });
+			// PickerProvider lets the view reach provider-scoped bookkeeping (the single-active slot)
+			// without guessing the service hash this provider was registered under.
+			{ PickerHash: pPickerHash, PickerProvider: this });
 
 		if (this.pict.views[pPickerHash])
 		{
@@ -200,10 +228,16 @@ class PictProviderPicker extends libPictProvider
 	 *       label, e.g. `{~DWTF:Record.NameFull:...~} ({~D:Record.Email~})`.
 	 *   - PageSize {number} - records per page (default 20).
 	 *   - Sort {string} - optional field to sort ascending (adds `FSF~<field>~ASC~0`).
-	 *   - BaseFilter {string|Array<string>|function} - optional always-applied FoxHound filter (AND),
-	 *     e.g. `FBV~IDCustomer~EQ~1`. May be a **function** `(searchTerm, page) => string|string[]`
+	 *   - BaseFilter {string|Array<string>|Object|function} - optional always-applied FoxHound filter
+	 *     (AND), e.g. `FBV~IDCustomer~EQ~1`. May be a **function** `(searchTerm, page) => string|string[]|Object`
 	 *     evaluated on every search — the generic hook for host-injected CONTEXTUAL scoping (project,
 	 *     tenant, spec-year, …). The module stays agnostic; the host supplies the closure.
+	 *     The object form `{ Filters, BackOffFilters }` (each a string or array of stanzas) splits the
+	 *     scope into a MANDATORY set and a BACK-OFF set: both are applied together first, and when the
+	 *     first page of a search comes back EMPTY the request is retried once WITHOUT the back-off set —
+	 *     so a host can narrow aggressively ("this project's items") yet auto-widen instead of showing
+	 *     "No matches" when the narrow scope has none. Later pages of the same search stay widened so
+	 *     "Load more" pages the set the user is actually looking at.
 	 *   - MapRecord {function} - optional `(record) => {Value, Text}` mapper (overrides Value/TextField).
 	 *   - JoinEntity {string} - optional second entity to JOIN for a compound display (e.g. a `LineItem`
 	 *     shown with its `Project`). Each searched row must carry the FK (`JoinField`). Because Meadow
@@ -224,9 +258,11 @@ class PictProviderPicker extends libPictProvider
 	 *     Label: 'Year' }]`). A string spec shows the raw value; an object spec can prefix a `Label`
 	 *     (`"Year: 2000"`) or render a `Template` against the whole record. Renders as `Tags` (an array)
 	 *     alongside the optional single `Tag`.
+	 * @param {string} [pStateKey] - Key (the picker hash) under which the back-off bookkeeping is held on
+	 *   the provider, so it survives this closure being rebuilt on re-mount. Omit for closure-local state.
 	 * @return {(pSearchTerm: string, pPage: number) => Promise<{results: Array<any>, hasMore: boolean}>}
 	 */
-	createEntityDataProvider(pConfig)
+	createEntityDataProvider(pConfig, pStateKey)
 	{
 		const tmpEntity = pConfig.Entity;
 		const tmpSearchFields = (Array.isArray(pConfig.SearchFields) && pConfig.SearchFields.length > 0) ? pConfig.SearchFields : [ 'Name' ];
@@ -241,6 +277,13 @@ class PictProviderPicker extends libPictProvider
 		const tmpEntityTagFields = Array.isArray(pConfig.EntityTags) ? pConfig.EntityTags : false;
 		const tmpTextTemplate = pConfig.TextTemplate || false;
 
+		// Back-off state: after a page-0 search comes back empty and is retried without the back-off set,
+		// later pages of the SAME term stay widened (a new page-0 resets it). Held on the provider by hash
+		// so it survives this closure's marshal-time rebuild; no key (direct API use) = closure-local.
+		const tmpBackOff = pStateKey
+			? (this.backOffState[pStateKey] = this.backOffState[pStateKey] || { Dropped: false, Term: null })
+			: { Dropped: false, Term: null };
+
 		return (pSearchTerm, pPage) => new Promise((resolve, reject) =>
 		{
 			if (!this.pict.EntityProvider || typeof this.pict.EntityProvider.getEntitySetPage !== 'function')
@@ -250,39 +293,87 @@ class PictProviderPicker extends libPictProvider
 
 			// Resolve the base filter at SEARCH time. A function form lets the host inject contextual
 			// scoping (e.g. "only this project's line items") without the module knowing the context;
-			// it can return a single stanza, an array of stanzas, or nothing.
+			// it can return a single stanza, an array of stanzas, a `{ Filters, BackOffFilters }` split,
+			// or nothing.
 			let tmpBaseFilter = tmpBaseFilterConfig;
 			if (typeof tmpBaseFilterConfig === 'function')
 			{
 				try { tmpBaseFilter = tmpBaseFilterConfig(pSearchTerm, pPage); }
 				catch (pScopeError) { this.pict.log.warn(`Pict-Section-Picker [${tmpEntity}] BaseFilter() threw; ignoring contextual scope.`, pScopeError); tmpBaseFilter = ''; }
 			}
-			if (Array.isArray(tmpBaseFilter)) { tmpBaseFilter = tmpBaseFilter.filter(Boolean).join('~'); }
+			const tmpScope = this._normalizeBaseFilter(tmpBaseFilter);
 
-			const tmpStanzas = [];
-			if (tmpBaseFilter) { tmpStanzas.push(tmpBaseFilter); }
-			if (pSearchTerm) { tmpStanzas.push(this.buildSearchFilter(tmpSearchFields, pSearchTerm)); }
-			if (tmpSort) { tmpStanzas.push(`FSF~${tmpSort}~ASC~0`); }
-			const tmpFilter = tmpStanzas.filter(Boolean).join('~');
+			const tmpPageIndex = (pPage || 0);
+			if (tmpPageIndex === 0) { tmpBackOff.Dropped = false; tmpBackOff.Term = null; }
+			const tmpCarryWidened = tmpBackOff.Dropped && (tmpBackOff.Term === (pSearchTerm || ''));
+			const tmpApplyBackOff = !!tmpScope.BackOffFilter && !tmpCarryWidened;
 
-			const tmpCursor = (pPage || 0) * tmpPageSize;
-			this.pict.EntityProvider.getEntitySetPage(tmpEntity, tmpFilter, tmpCursor, tmpPageSize,
+			const fComposeFilter = (pIncludeBackOff) =>
+			{
+				const tmpStanzas = [];
+				if (tmpScope.Filter) { tmpStanzas.push(tmpScope.Filter); }
+				if (pIncludeBackOff && tmpScope.BackOffFilter) { tmpStanzas.push(tmpScope.BackOffFilter); }
+				if (pSearchTerm) { tmpStanzas.push(this.buildSearchFilter(tmpSearchFields, pSearchTerm)); }
+				if (tmpSort) { tmpStanzas.push(`FSF~${tmpSort}~ASC~0`); }
+				return tmpStanzas.filter(Boolean).join('~');
+			};
+
+			const fFinish = (pRecords) =>
+			{
+				const tmpList = Array.isArray(pRecords) ? pRecords : [];
+				// JoinEntity (when configured): one INN fetch for the joined rows, stitched onto each
+				// searched row, before mapping — so the option Text can show the compound display.
+				this._decorateRecordsWithJoin(tmpList, tmpJoinConfig).then((pDecorated) =>
+				{
+					const tmpResults = pDecorated.map((pRecord) => tmpMapRecord
+						? tmpMapRecord(pRecord)
+						: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
+					// hasMore: a full page came back, so there is (probably) another. Avoids a Count round-trip.
+					return resolve({ results: tmpResults, hasMore: (tmpList.length >= tmpPageSize) });
+				});
+			};
+
+			const tmpCursor = tmpPageIndex * tmpPageSize;
+			this.pict.EntityProvider.getEntitySetPage(tmpEntity, fComposeFilter(tmpApplyBackOff), tmpCursor, tmpPageSize,
 				(pError, pRecords) =>
 				{
 					if (pError) { return reject(pError); }
 					const tmpList = Array.isArray(pRecords) ? pRecords : [];
-					// JoinEntity (when configured): one INN fetch for the joined rows, stitched onto each
-					// searched row, before mapping — so the option Text can show the compound display.
-					this._decorateRecordsWithJoin(tmpList, tmpJoinConfig).then((pDecorated) =>
+					// Back-off retry: an EMPTY first page under the back-off set means the narrow scope has
+					// nothing — auto-widen by retrying once without it, instead of stranding the user on
+					// "No matches" for options that exist just outside the preferred scope.
+					if (tmpList.length < 1 && tmpApplyBackOff && tmpPageIndex === 0)
 					{
-						const tmpResults = pDecorated.map((pRecord) => tmpMapRecord
-							? tmpMapRecord(pRecord)
-							: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
-						// hasMore: a full page came back, so there is (probably) another. Avoids a Count round-trip.
-						return resolve({ results: tmpResults, hasMore: (tmpList.length >= tmpPageSize) });
-					});
+						tmpBackOff.Dropped = true;
+						tmpBackOff.Term = (pSearchTerm || '');
+						return this.pict.EntityProvider.getEntitySetPage(tmpEntity, fComposeFilter(false), tmpCursor, tmpPageSize,
+							(pRetryError, pRetryRecords) =>
+							{
+								if (pRetryError) { return reject(pRetryError); }
+								return fFinish(pRetryRecords);
+							});
+					}
+					return fFinish(tmpList);
 				});
 		});
+	}
+
+	/**
+	 * Normalize a resolved BaseFilter value into `{ Filter, BackOffFilter }` joined-stanza strings.
+	 * Accepts the historical string / array forms (all-mandatory, no back-off) and the object form
+	 * `{ Filters, BackOffFilters }` where each side is itself a string or array of stanzas.
+	 *
+	 * @param {any} pResolved - The BaseFilter config value, or a BaseFilter function's return value.
+	 * @return {{Filter: string, BackOffFilter: string}}
+	 */
+	_normalizeBaseFilter(pResolved)
+	{
+		const fJoin = (pValue) => Array.isArray(pValue) ? pValue.filter(Boolean).join('~') : (pValue || '');
+		if (pResolved && typeof pResolved === 'object' && !Array.isArray(pResolved))
+		{
+			return { Filter: fJoin(pResolved.Filters), BackOffFilter: fJoin(pResolved.BackOffFilters) };
+		}
+		return { Filter: fJoin(pResolved), BackOffFilter: '' };
 	}
 
 	/**
@@ -481,7 +572,8 @@ class PictProviderPicker extends libPictProvider
 	createEntityPicker(pPickerHash, pConfig)
 	{
 		const tmpConfig = Object.assign({}, pConfig);
-		tmpConfig.DataProvider = this.createEntityDataProvider(pConfig);
+		// Key the back-off state by picker hash so it survives this rebuild (hosts re-mount every marshal).
+		tmpConfig.DataProvider = this.createEntityDataProvider(pConfig, pPickerHash);
 		if (!tmpConfig.ResolveValue) { tmpConfig.ResolveValue = this.createEntityResolveValue(pConfig); }
 		return this.createPicker(pPickerHash, tmpConfig);
 	}

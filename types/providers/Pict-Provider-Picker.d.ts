@@ -5,6 +5,13 @@ export = PictProviderPicker;
  */
 declare class PictProviderPicker extends libPictProvider {
     constructor(pFable: any, pOptions: any, pServiceHash: any);
+    /** @type {Record<string, {Dropped: boolean, Term: string|null}>} */
+    backOffState: Record<string, {
+        Dropped: boolean;
+        Term: string | null;
+    }>;
+    /** @type {string|false} */
+    currentOpenPickerHash: string | false;
     /**
      * Create (or reconfigure + reuse) a picker widget instance.
      *
@@ -18,6 +25,8 @@ declare class PictProviderPicker extends libPictProvider {
      *   - Searchable {boolean} - show the search box (default true).
      *   - Options {Array<{Value:any, Text:string}>} - static option list.
      *   - OnChange {function} - optional callback invoked with the new value after a selection.
+     *   - SingleActivePicker {boolean} - opt-in: opening this picker closes any open sibling
+     *     (defaults from the provider's own SingleActivePicker option).
      * @return {any} The picker view instance.
      */
     createPicker(pPickerHash: string, pConfig: Record<string, any>): any;
@@ -49,10 +58,16 @@ declare class PictProviderPicker extends libPictProvider {
      *       label, e.g. `{~DWTF:Record.NameFull:...~} ({~D:Record.Email~})`.
      *   - PageSize {number} - records per page (default 20).
      *   - Sort {string} - optional field to sort ascending (adds `FSF~<field>~ASC~0`).
-     *   - BaseFilter {string|Array<string>|function} - optional always-applied FoxHound filter (AND),
-     *     e.g. `FBV~IDCustomer~EQ~1`. May be a **function** `(searchTerm, page) => string|string[]`
+     *   - BaseFilter {string|Array<string>|Object|function} - optional always-applied FoxHound filter
+     *     (AND), e.g. `FBV~IDCustomer~EQ~1`. May be a **function** `(searchTerm, page) => string|string[]|Object`
      *     evaluated on every search — the generic hook for host-injected CONTEXTUAL scoping (project,
      *     tenant, spec-year, …). The module stays agnostic; the host supplies the closure.
+     *     The object form `{ Filters, BackOffFilters }` (each a string or array of stanzas) splits the
+     *     scope into a MANDATORY set and a BACK-OFF set: both are applied together first, and when the
+     *     first page of a search comes back EMPTY the request is retried once WITHOUT the back-off set —
+     *     so a host can narrow aggressively ("this project's items") yet auto-widen instead of showing
+     *     "No matches" when the narrow scope has none. Later pages of the same search stay widened so
+     *     "Load more" pages the set the user is actually looking at.
      *   - MapRecord {function} - optional `(record) => {Value, Text}` mapper (overrides Value/TextField).
      *   - JoinEntity {string} - optional second entity to JOIN for a compound display (e.g. a `LineItem`
      *     shown with its `Project`). Each searched row must carry the FK (`JoinField`). Because Meadow
@@ -73,12 +88,26 @@ declare class PictProviderPicker extends libPictProvider {
      *     Label: 'Year' }]`). A string spec shows the raw value; an object spec can prefix a `Label`
      *     (`"Year: 2000"`) or render a `Template` against the whole record. Renders as `Tags` (an array)
      *     alongside the optional single `Tag`.
+     * @param {string} [pStateKey] - Key (the picker hash) under which the back-off bookkeeping is held on
+     *   the provider, so it survives this closure being rebuilt on re-mount. Omit for closure-local state.
      * @return {(pSearchTerm: string, pPage: number) => Promise<{results: Array<any>, hasMore: boolean}>}
      */
-    createEntityDataProvider(pConfig: Record<string, any>): (pSearchTerm: string, pPage: number) => Promise<{
+    createEntityDataProvider(pConfig: Record<string, any>, pStateKey?: string): (pSearchTerm: string, pPage: number) => Promise<{
         results: Array<any>;
         hasMore: boolean;
     }>;
+    /**
+     * Normalize a resolved BaseFilter value into `{ Filter, BackOffFilter }` joined-stanza strings.
+     * Accepts the historical string / array forms (all-mandatory, no back-off) and the object form
+     * `{ Filters, BackOffFilters }` where each side is itself a string or array of stanzas.
+     *
+     * @param {any} pResolved - The BaseFilter config value, or a BaseFilter function's return value.
+     * @return {{Filter: string, BackOffFilter: string}}
+     */
+    _normalizeBaseFilter(pResolved: any): {
+        Filter: string;
+        BackOffFilter: string;
+    };
     /**
      * Resolve the JoinEntity options off an entity-source config into a normalized internal shape, or
      * `false` when no JoinEntity is configured. Centralizes the defaults so the DataProvider and the

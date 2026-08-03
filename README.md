@@ -114,8 +114,21 @@ Entity-source configuration:
 | `TextField` | `'Name'` | Record field used as the option `Text`. |
 | `PageSize` | `20` | Records per page. |
 | `Sort` | — | Field to sort ascending (`FSF~<field>~ASC~0`). |
-| `BaseFilter` | — | An always-applied FoxHound filter (AND), e.g. `FBV~IDCustomer~EQ~1`. |
+| `BaseFilter` | — | An always-applied FoxHound filter (AND), e.g. `FBV~IDCustomer~EQ~1`. A string, an array of stanzas, a `{ Filters, BackOffFilters }` split (see below), or a **function** `(term, page)` returning any of those — re-evaluated on every search, the hook for host-injected contextual scoping. |
 | `MapRecord` | — | `(record) => {Value, Text}` mapper, overriding `Value`/`TextField`. |
+
+### Back-off filters (auto-widen on empty)
+
+`BaseFilter`'s object form splits the scope into a **mandatory** set and a **preferred (back-off)** set:
+
+```javascript
+BaseFilter: () => ({
+    Filters: [ 'FBV~IDProject~EQ~10' ],            // always applied
+    BackOffFilters: [ 'FBL~IDMaterial~INN~1,2,3' ], // preferred narrowing
+})
+```
+
+Both sets apply together first. When the **first page** of a search comes back **empty**, the request is retried once **without** the back-off set — so a host can narrow aggressively ("this project's materials") yet auto-widen instead of showing "No matches" when the preferred scope has nothing. Later pages of the same search stay widened, so "Load more" pages the set the user is actually looking at; the next fresh search re-applies the back-off set.
 
 The lower-level builders are also exposed: `createEntityDataProvider(cfg)` and `createEntityResolveValue(cfg)` return the raw functions if you want to wire them yourself.
 
@@ -236,6 +249,7 @@ OnCreate: (pTerm) =>
 | `SelectedValuesAddress` | — | (multi) mirror the selection as a record array. |
 | `OnCreate` | — | `(term) => {Value, Text}` to enable creatable entries. |
 | `OnChange` | — | Called after a selection: single → `(value, record)`, multi → `(values, records)`. |
+| `SingleActivePicker` | `false` | Opt-in: opening this picker closes any other open picker **that also opted in** (one dropdown per page). A picker left `false` neither closes a participant nor is closed by one. Usually enabled fleet-wide by setting `SingleActivePicker: true` on the **provider's** options — `createPicker` seeds it into every picker it creates; an explicit per-picker value overrides. |
 
 ## View methods
 
@@ -248,6 +262,11 @@ Call these on the picker view instance — `this.pict.views['<hash>']`:
 | `setValue(pValue)` | Set the selection programmatically — the supported counterpart to `getValue()`. Single mode takes a scalar; multi mode takes an array (or a csv string). Writes through to the bound address(es), resolves the display label of any unknown value (from the loaded options, else via `ResolveValue` in async mode), and repaints. Does **not** fire `OnChange` — it is a programmatic set (e.g. a host marshaling a form value into the control), not a user pick. Returns the view for chaining. |
 | `getSelectedRecords()` | (multi) The full `{Value, Text}` record list for the current selection. |
 
+> **Contextual scope changes need no hook.** An async picker drops its loaded pages when the dropdown
+> closes, so every open re-queries and re-resolves `BaseFilter`. A host whose filters change *outside*
+> the picker (a "Show All" toggle, a dependent-field pick) can just change them — the next open reflects
+> it. There is no cache to invalidate.
+
 ```javascript
 const tmpPicker = this.pict.views['AuthorPicker'];
 tmpPicker.setValue(141);            // single: select author 141 (label resolves via ResolveValue if async)
@@ -255,9 +274,48 @@ tmpPicker.setValue([ 2, 10, 141 ]); // multi: select these values (array or "2,1
 const tmpSelected = tmpPicker.getValue();
 ```
 
+## Dropdown anchoring
+
+The dropdown anchors itself in CSS: `.pps-pop` is `position: absolute` against the control's own
+`.pps` box, so it travels with the control when the page scrolls — no measuring, no reflow work, and
+no scroll or resize listeners.
+
+That breaks in one situation: an ancestor with `overflow` other than `visible` clips an absolutely
+positioned panel. Such a container can't be un-clipped in CSS, because setting one axis to `auto` or
+`hidden` forces the other off `visible`.
+
+The escape is to give the panel a containing block outside the clip — an overflow ancestor only clips
+an absolutely positioned box when it sits in that box's containing-block chain. So on open the view
+walks up from the control, and when it finds a clipping ancestor it moves the panel out to `<body>`
+and places it in **document** coordinates, flipping above when the room below is short.
+
+It stays `position: absolute` there on purpose. An absolute box on `<body>` resolves against the
+document, so the browser keeps travelling it with the page exactly like the default path —
+`position: fixed` would resolve against the viewport and strand the panel the moment you scrolled.
+Both paths therefore anchor once and need no repositioning, and neither uses an event listener.
+
+The portal engages only when the clip would **actually reach the panel** — not merely because an
+overflow ancestor exists. On open the view finds the nearest clipping ancestor and projects where the
+panel would open (downward from the control, up to its max height); if that box fits inside the clipper
+it stays on the CSS path, and only a dropdown near a clipping edge — the case the portal is for —
+moves out. So `overflow: hidden` used for rounded corners or text-ellipsis, or a tall scroll container
+the dropdown clears with room to spare, does not force a portal. It is still one measurement at open,
+with no listeners.
+
+While portaled the panel is pinned to the control's width and clamped to the room actually available,
+so its list scrolls in place rather than running off the screen. The mode is re-decided on each open
+and on any re-render that happens while open; closing brings the panel back inside its widget.
+
+One thing to know about the portal path: it tracks **page** scroll, not scrolling *inside* the clipping
+container itself. Scrolling that container while the dropdown is open would leave the panel behind — in
+practice unreachable, since the open dropdown's backdrop covers the viewport and takes the wheel and the
+container's scrollbar. (Theme tokens are not a concern: a portaled panel carries the host's resolved
+`--theme-color-*` values across with it, so it paints identically whether the tokens are defined at
+`:root` or scoped to a container above the control.)
+
 ## Theming
 
-The widget paints from `--theme-color-*` tokens with sensible hex fallbacks, so it inherits the host app's theme. Relevant tokens: `--theme-color-brand-primary`, `--theme-color-text-primary`, `--theme-color-text-muted`, `--theme-color-border-default`, `--theme-color-border-light`, `--theme-color-border-strong`, `--theme-color-background-primary`, `--theme-color-background-panel`, `--theme-color-background-tertiary`.
+The widget paints from `--theme-color-*` tokens with sensible hex fallbacks, so it inherits the host app's theme. Define them at `:root`, on `body`, or on a container around the picker — a dropdown that portals out (see [Dropdown anchoring](#dropdown-anchoring)) carries the resolved values with it, so a scoped container paints the same as `:root`. Relevant tokens: `--theme-color-brand-primary`, `--theme-color-text-primary`, `--theme-color-text-secondary`, `--theme-color-text-muted`, `--theme-color-border-default`, `--theme-color-border-light`, `--theme-color-border-strong`, `--theme-color-background-primary`, `--theme-color-background-panel`, `--theme-color-background-tertiary`.
 
 ## Example application
 
