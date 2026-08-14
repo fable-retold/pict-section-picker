@@ -102,6 +102,24 @@ const _PickerCSS = /*css*/`
 .pps-create:hover { background: var(--theme-color-background-tertiary, #eceef2); }
 .pps-create-ic { flex: 0 0 auto; display: inline-flex; }
 
+/* Field decoration (opt-in): the ⚙ toggle in the search row + the field chooser panel between search and
+   list. The chooser mount stays empty (collapsed) until opened. */
+.pps-decorate-btn { flex: 0 0 auto; display: inline-flex; align-items: center; cursor: pointer; font-size: 0.82rem;
+	padding: 0.15rem; border: none; border-radius: 5px; background: transparent; color: var(--theme-color-text-muted, #6b7686); opacity: 0.7; }
+.pps-decorate-btn:hover { opacity: 1; background: var(--theme-color-background-tertiary, #eceef2); }
+.pps-decorate-btn.pps-decorate-on { color: var(--theme-color-brand-primary, #156dd1); opacity: 1; }
+.pps-decorate-btn.pps-decorate-open { background: var(--theme-color-background-tertiary, #eceef2); opacity: 1; }
+.pps-decorate-panel:empty { display: none; }
+.pps-decorate { flex: 0 0 auto; max-height: 11rem; overflow-y: auto; padding: 0.5rem 0.7rem;
+	border-bottom: 1px solid var(--theme-color-border-light, #e8ebf0); background: var(--theme-color-background-tertiary, #f4f6f9); }
+.pps-decorate-title { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--theme-color-text-muted, #6b7686); margin-bottom: 0.4rem; }
+.pps-decorate-list { display: flex; flex-direction: column; gap: 0.05rem; }
+.pps-decorate-opt { display: flex; align-items: center; gap: 0.45rem; cursor: pointer; font-size: 0.86rem; color: var(--theme-color-text-primary, #1f2733); padding: 0.15rem 0.1rem; }
+.pps-decorate-opt:hover { color: var(--theme-color-brand-primary, #156dd1); }
+.pps-decorate-opt input { flex: 0 0 auto; cursor: pointer; margin: 0; }
+.pps-decorate-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pps-decorate-empty { font-size: 0.82rem; color: var(--theme-color-text-muted, #6b7686); padding: 0.1rem; }
+
 /* Form-input adapter (pict-section-picker/form): the picker host fills its row like the host's
    native inputs (width:100% forces it to wrap below the label span + fill, matching a scalar input). */
 .pps-form-host { flex: 1 1 100%; min-width: 0; width: 100%; }

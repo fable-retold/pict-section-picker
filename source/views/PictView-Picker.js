@@ -13,6 +13,19 @@ const _THEME_TOKENS =
 	'--theme-color-background-tertiary',
 ];
 
+/**
+ * Record columns never offered as field-decoration choices — the common Meadow audit/system columns. The
+ * value + text fields and any host `DecorationIgnoreFields` are layered on top of these at runtime.
+ * @type {Array<string>}
+ */
+const _DECORATION_IGNORE_DEFAULT =
+[
+	'Deleted', 'DeleteDate', 'DeletingIDUser', 'CreateDate', 'CreatingIDUser',
+	'UpdateDate', 'UpdatingIDUser', 'ExternalSyncDate',
+];
+/** localStorage key prefix for the per-entity field-decoration choice (client-only, no server state). */
+const _DECORATION_KEY_PREFIX = 'PictSectionPicker.Decoration.';
+
 /** @type {Record<string, any>} */
 const _DEFAULT_CONFIGURATION =
 {
@@ -68,6 +81,18 @@ const _DEFAULT_CONFIGURATION =
 	// enabled fleet-wide via the provider's SingleActivePicker option (createPicker seeds it).
 	SingleActivePicker: false,
 
+	// The Meadow entity this picker selects from. Set automatically by createEntityPicker; a custom-
+	// DataProvider host may pass it to opt into entity-aware affordances (preview cards, field decoration).
+	Entity: false,
+	// Field decoration (opt-in). When true AND the picker is entity-aware — an `Entity` name is set and its
+	// result rows carry a full `Record` — a small ⚙ in the search row lets the user pin extra record fields
+	// onto every option row as tag badges ("VendorCode: 12345"), to tell same-named entities apart. The
+	// choice is remembered in localStorage keyed by Entity (so it follows the user to every picker of that
+	// entity) and never leaves the browser. `DecorationIgnoreFields` drops fields from the chooser, on top
+	// of the value/text fields and the common audit columns, which are always hidden.
+	AllowFieldDecoration: false,
+	DecorationIgnoreFields: [],
+
 	Templates:
 	[
 		{
@@ -88,6 +113,7 @@ const _DEFAULT_CONFIGURATION =
 		<div class="pps-pop" id="PPS_Pop_{~D:Record.PickerHash~}">
 			<div class="pps-panel">
 				{~TS:Pict-Section-Picker-Search:Record.SearchSlot~}
+				<div class="pps-decorate-panel" id="PPS_Decorate_{~D:Record.PickerHash~}">{~T:Pict-Section-Picker-DecoratePanel~}</div>
 				<div class="pps-list" id="PPS_List_{~D:Record.PickerHash~}">
 					{~T:Pict-Section-Picker-List~}
 				</div>
@@ -152,6 +178,7 @@ const _DEFAULT_CONFIGURATION =
 	<div class="pps-search">
 		<span class="pps-search-ic">{~I:Search~}</span>
 		<input type="text" id="PPS_Search_{~D:Record.PickerHash~}" placeholder="Search…" autocomplete="off" oninput="_Pict.views['{~D:Record.PickerHash~}'].search(this.value)" onkeydown="_Pict.views['{~D:Record.PickerHash~}'].onSearchKey(event)">
+		{~TS:Pict-Section-Picker-DecorateToggle:Record.DecorateSlot~}
 	</div>
 `
 		},
@@ -235,6 +262,33 @@ const _DEFAULT_CONFIGURATION =
 		<span class="pps-card-info" title="Preview" onclick="event.stopPropagation(); _Pict.providers.RecordSetCardManager.openCard('{~D:Record.Entity~}', '{~D:Record.Value~}', this)">{~I:Info~}</span>
 `
 		},
+		{
+			// Field-decoration ⚙ (AllowFieldDecoration) — a trailing button in the search row that opens the
+			// field chooser. Rendered via the single-element-array DecorateSlot so it appears only when the
+			// feature is enabled + eligible. stopPropagation so it never bubbles into the control toggle.
+			Hash: 'Pict-Section-Picker-DecorateToggle',
+			Template: /*html*/`<button type="button" id="PPS_DecorateBtn_{~D:Record.PickerHash~}" class="pps-decorate-btn{~NE:Record.HasFields^ pps-decorate-on~}{~NE:Record.Open^ pps-decorate-open~}" title="Show extra fields on each row" onclick="event.stopPropagation(); _Pict.views['{~D:Record.PickerHash~}'].toggleDecorate(event)">{~I:Settings~}</button>`
+		},
+		{
+			// The field chooser — rendered into #PPS_Decorate_ between the search row and the list. Empty
+			// (collapsed) unless the chooser is open; DecoratePanelSlot carries the candidate fields.
+			Hash: 'Pict-Section-Picker-DecoratePanel',
+			Template: /*html*/`{~TS:Pict-Section-Picker-DecorateInner:Record.DecoratePanelSlot~}`
+		},
+		{
+			Hash: 'Pict-Section-Picker-DecorateInner',
+			Template: /*html*/`
+		<div class="pps-decorate">
+			<div class="pps-decorate-title">Show extra fields on each row</div>
+			<div class="pps-decorate-list">{~TS:Pict-Section-Picker-DecorateField:Record.Fields~}{~NE:Record.NoFields^<div class="pps-decorate-empty">No extra fields to show yet.</div>~}</div>
+		</div>
+`
+		},
+		{
+			// One checkbox row in the chooser. The label wraps the input so a click anywhere toggles it.
+			Hash: 'Pict-Section-Picker-DecorateField',
+			Template: /*html*/`<label class="pps-decorate-opt"><input type="checkbox"{~NE:Record.Checked^ checked~} onclick="_Pict.views['{~D:Record.PickerHash~}'].toggleDecorateField('{~D:Record.Field~}')"><span class="pps-decorate-name">{~D:Record.Field~}</span></label>`
+		},
 	],
 
 	Renderables:
@@ -285,6 +339,14 @@ class PictViewPicker extends libPictView
 		// so a chip keeps its label even after the search results that produced it have scrolled away.
 		this._values = [];
 		this._selectedRecords = {};
+
+		// Field-decoration (opt-in) state: the chosen extra fields (loaded from localStorage) + the chooser's
+		// open flag + a lazily-resolved storage backend. Load before the first _buildState so the initial
+		// paint already carries any remembered decorations.
+		this._decorationOpen = false;
+		this._decorationFields = [];
+		this._decorationStore = null;
+		this._loadDecorationFields();
 
 		// Populate the AppData state slot now so the template Record (resolved from
 		// DefaultTemplateRecordAddress) reflects it on the very first render — pict resolves the
@@ -544,6 +606,161 @@ class PictViewPicker extends libPictView
 		return (pRecord.Tags !== undefined) ? pRecord.Tags : pRecord.Tag;
 	}
 
+	// --- Field decoration (opt-in): let the user pin extra record fields onto each option row ---
+
+	/** @return {boolean} The decoration affordance is available: opted in, interactive, and namespaced. */
+	_decorationEnabled()
+	{
+		return (this.options.AllowFieldDecoration === true) && !this.options.ReadOnly && !!this._decorationKey();
+	}
+
+	/** localStorage key — per Entity, so a field pinned on one Organization picker shows on them all;
+	 *  falls back to the picker hash when no Entity is set. @return {string} */
+	_decorationKey()
+	{
+		if (this.options.Entity) { return `${_DECORATION_KEY_PREFIX}${this.options.Entity}`; }
+		return this.options.PickerHash ? `${_DECORATION_KEY_PREFIX}${this.options.PickerHash}` : '';
+	}
+
+	/** Lazily resolve a storage backend: window.localStorage in a browser, an in-memory shim otherwise
+	 *  (unit tests / SSR), mirroring the pict-section-recordset persistence idiom. */
+	_decorationStorage()
+	{
+		if (this._decorationStore) { return this._decorationStore; }
+		if ((typeof window === 'object') && window && (typeof window.localStorage === 'object') && window.localStorage)
+		{
+			this._decorationStore = window.localStorage;
+		}
+		else
+		{
+			const tmpMemory = {};
+			this._decorationStore = {
+				getItem: (pKey) => ((pKey in tmpMemory) ? tmpMemory[pKey] : null),
+				setItem: (pKey, pValue) => { tmpMemory[pKey] = String(pValue); },
+				removeItem: (pKey) => { delete tmpMemory[pKey]; },
+			};
+		}
+		return this._decorationStore;
+	}
+
+	/** Read the persisted decoration field list for this picker's entity into _decorationFields. */
+	_loadDecorationFields()
+	{
+		this._decorationFields = [];
+		if (this.options.AllowFieldDecoration !== true) { return; }
+		const tmpKey = this._decorationKey();
+		if (!tmpKey) { return; }
+		try
+		{
+			const tmpRaw = this._decorationStorage().getItem(tmpKey);
+			const tmpParsed = tmpRaw ? JSON.parse(tmpRaw) : [];
+			if (Array.isArray(tmpParsed)) { this._decorationFields = tmpParsed.filter((pField) => ((typeof pField === 'string') && pField)); }
+		}
+		catch (pError) { this._decorationFields = []; }
+	}
+
+	/** Persist the current decoration field list under this picker's entity key. */
+	_saveDecorationFields()
+	{
+		const tmpKey = this._decorationKey();
+		if (!tmpKey) { return; }
+		try { this._decorationStorage().setItem(tmpKey, JSON.stringify(this._decorationFields)); }
+		catch (pError) { /* storage full / disabled — the in-session choice still applies */ }
+	}
+
+	/** Field names hidden from the chooser: the common audit columns + the host's DecorationIgnoreFields +
+	 *  the value/text fields (already shown as the row's value + label). @return {Set<string>} */
+	_decorationIgnoreSet()
+	{
+		const tmpSet = new Set(_DECORATION_IGNORE_DEFAULT);
+		const tmpHostIgnore = Array.isArray(this.options.DecorationIgnoreFields) ? this.options.DecorationIgnoreFields : [];
+		tmpHostIgnore.forEach((pField) => { if (pField) { tmpSet.add(String(pField)); } });
+		if (this.options.ValueField) { tmpSet.add(String(this.options.ValueField)); }
+		else if (this.options.Entity) { tmpSet.add(`ID${this.options.Entity}`); }
+		tmpSet.add(this.options.TextField ? String(this.options.TextField) : 'Name');
+		return tmpSet;
+	}
+
+	/** Candidate decoration fields: the union of keys across the loaded rows' `Record` objects, minus the
+	 *  ignore set, sorted. Empty until a result page carries records. @return {Array<string>} */
+	_decorationCandidateFields()
+	{
+		const tmpKeys = {};
+		this._sourceRows().forEach((pRow) =>
+		{
+			const tmpRecord = pRow && pRow.Record;
+			if (tmpRecord && (typeof tmpRecord === 'object')) { Object.keys(tmpRecord).forEach((pKey) => { tmpKeys[pKey] = true; }); }
+		});
+		const tmpIgnore = this._decorationIgnoreSet();
+		return Object.keys(tmpKeys).filter((pKey) => !tmpIgnore.has(pKey)).sort();
+	}
+
+	/** The decoration chips for an option: "Field: value" for each chosen field present on its `Record`.
+	 *  @param {any} pOption @return {Array<string>|null} */
+	_decorationTagsFor(pOption)
+	{
+		if (!this._decorationEnabled() || (this._decorationFields.length === 0)) { return null; }
+		const tmpRecord = pOption && pOption.Record;
+		if (!tmpRecord || (typeof tmpRecord !== 'object')) { return null; }
+		const tmpTags = this._decorationFields
+			.map((pField) => { const tmpValue = tmpRecord[pField]; return ((tmpValue !== undefined && tmpValue !== null && tmpValue !== '') ? `${pField}: ${tmpValue}` : null); })
+			.filter((pTag) => (pTag !== null));
+		return (tmpTags.length > 0) ? tmpTags : null;
+	}
+
+	/** The row's own EntityTag(s) plus the user's decoration chips (decorations last). @param {any} pOption */
+	_combinedTags(pOption)
+	{
+		const tmpBase = this._recordTags(pOption);
+		const tmpDecoration = this._decorationTagsFor(pOption);
+		if (!tmpDecoration) { return tmpBase; }
+		const tmpBaseList = Array.isArray(tmpBase) ? tmpBase : ((tmpBase !== undefined && tmpBase !== null && tmpBase !== '') ? [ tmpBase ] : []);
+		return tmpBaseList.concat(tmpDecoration);
+	}
+
+	/** Toggle the field chooser open/closed (the ⚙ in the search row); repaints just the chooser + button. */
+	toggleDecorate(pEvent)
+	{
+		if (pEvent && (typeof pEvent.stopPropagation === 'function')) { pEvent.stopPropagation(); }
+		if (!this._decorationEnabled()) { return; }
+		this._decorationOpen = !this._decorationOpen;
+		this._renderDecorate();
+		this._syncDecorateToggle();
+	}
+
+	/** Add/remove a field from the decoration set, persist, and repaint the option list + chooser. */
+	toggleDecorateField(pField)
+	{
+		if (!pField) { return; }
+		const tmpIndex = this._decorationFields.indexOf(pField);
+		if (tmpIndex >= 0) { this._decorationFields.splice(tmpIndex, 1); }
+		else { this._decorationFields.push(pField); }
+		this._saveDecorationFields();
+		this._renderList();
+		this._renderDecorate();
+		this._syncDecorateToggle();
+	}
+
+	/** Re-render only the chooser panel (mirrors _renderList — targeted, keeps the search input focused). */
+	_renderDecorate()
+	{
+		if (typeof document === 'undefined') { return; }
+		if (!document.getElementById(`PPS_Decorate_${this.options.PickerHash}`)) { return; }
+		this._buildState();
+		const tmpHTML = this.pict.parseTemplateByHash('Pict-Section-Picker-DecoratePanel', this._state());
+		this.pict.ContentAssignment.assignContent(`#PPS_Decorate_${this.options.PickerHash}`, tmpHTML);
+	}
+
+	/** Reflect the on/open state onto the ⚙ button without rebuilding the search row (which holds focus). */
+	_syncDecorateToggle()
+	{
+		if (typeof document === 'undefined') { return; }
+		const tmpBtn = document.getElementById(`PPS_DecorateBtn_${this.options.PickerHash}`);
+		if (!tmpBtn) { return; }
+		tmpBtn.classList.toggle('pps-decorate-on', (this._decorationFields.length > 0));
+		tmpBtn.classList.toggle('pps-decorate-open', !!this._decorationOpen);
+	}
+
 	/**
 	 * (Re)compute the picker's render state into AppData: the displayed value / chips + the
 	 * (search-filtered) option list with selected/highlight flags.
@@ -578,7 +795,7 @@ class PictViewPicker extends libPictView
 				Selected: tmpIsSelected,
 				NotSelected: !tmpIsSelected,
 				Highlight: (pIndex === this._highlight),
-			}, this._tagSlots(this._recordTags(pOption), tmpTagLast));
+			}, this._tagSlots(this._combinedTags(pOption), tmpTagLast));
 		});
 
 		// Cluster options into categories (preserving order), keyed by each source row's optional Group.
@@ -618,8 +835,24 @@ class PictViewPicker extends libPictView
 			? [ { PickerHash: this.options.PickerHash, Label: this.options.ClearLabel || 'Any', Selected: !tmpClearableHasValue, NotSelected: tmpClearableHasValue } ]
 			: [];
 		tmpState.ClearSlot = (tmpAllowClear && tmpClearableHasValue) ? [ { PickerHash: this.options.PickerHash } ] : [];
+		// Field decoration (opt-in): the ⚙ toggle rides in the search row; the chooser panel renders between
+		// search and list. Both are single-element-array slots gated on the feature being enabled + eligible.
+		const tmpDecorate = this._decorationEnabled();
+		const tmpDecorateFields = (tmpDecorate && this._decorationOpen) ? this._decorationCandidateFields() : [];
+		tmpState.DecoratePanelSlot = (tmpDecorate && this._decorationOpen)
+			? [ {
+				PickerHash: this.options.PickerHash,
+				Fields: tmpDecorateFields.map((pField) => ({ PickerHash: this.options.PickerHash, Field: pField, Checked: (this._decorationFields.indexOf(pField) >= 0) })),
+				NoFields: (tmpDecorateFields.length === 0),
+			} ]
+			: [];
 		// Single-element-array conditionals (render the search box / "Load more" only when applicable).
-		tmpState.SearchSlot = this.options.Searchable ? [ { PickerHash: this.options.PickerHash } ] : [];
+		tmpState.SearchSlot = this.options.Searchable
+			? [ {
+				PickerHash: this.options.PickerHash,
+				DecorateSlot: tmpDecorate ? [ { PickerHash: this.options.PickerHash, HasFields: (this._decorationFields.length > 0), Open: !!this._decorationOpen } ] : [],
+			} ]
+			: [];
 		tmpState.Loading = !!this._loading;
 		tmpState.IsEmpty = (tmpState.Options.length === 0 && !this._loading && !tmpCanCreate);
 		tmpState.HasMore = !!(tmpAsync && this._hasMore && !this._loading);
@@ -966,6 +1199,7 @@ class PictViewPicker extends libPictView
 	{
 		this._open = false;
 		this._highlight = -1;
+		this._decorationOpen = false;
 		const tmpProvider = this.options.PickerProvider;
 		if (tmpProvider && tmpProvider.currentOpenPickerHash === this.options.PickerHash) { tmpProvider.currentOpenPickerHash = false; }
 		// Bring a portaled panel home, so a closed picker never leaves a stray on <body>.
