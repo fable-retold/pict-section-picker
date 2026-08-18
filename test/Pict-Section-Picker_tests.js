@@ -610,6 +610,99 @@ suite
 
 		suite
 		(
+			'Provider createEntityDataProvider — PriorityValues (pin-to-top)',
+			() =>
+			{
+				/** Fake EntityProvider that answers the priority INN fetch and the natural (NIN) page differently. */
+				const withPinnedEntityProvider = (pProvider, pPinnedRecords, pNaturalRecords) =>
+				{
+					const tmpCalls = [];
+					pProvider.pict.EntityProvider =
+					{
+						getEntitySetPage: (pEntity, pFilter, pCursor, pLimit, fCallback) =>
+						{
+							tmpCalls.push({ Entity: pEntity, Filter: pFilter, Cursor: pCursor, Limit: pLimit });
+							return fCallback(null, (pFilter.indexOf('~INN~') > -1) ? pPinnedRecords : pNaturalRecords);
+						},
+					};
+					return tmpCalls;
+				};
+
+				test
+				(
+					'floats PriorityValues to the top of the first browse page and holds them out of the natural flow',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						const tmpCalls = withPinnedEntityProvider(tmpProvider, [ { IDAuthor: 7, Name: 'Pinned' } ], [ { IDAuthor: 1, Name: 'A' }, { IDAuthor: 2, Name: 'B' } ]);
+						const tmpDataProvider = tmpProvider.createEntityDataProvider({ Entity: 'Author', ValueField: 'IDAuthor', TextField: 'Name', SearchFields: [ 'Name' ], PriorityValues: [ 7 ] });
+						tmpDataProvider('', 0).then((pResult) =>
+						{
+							Expect(pResult.results.map((pRow) => pRow.Value)).to.deep.equal([ 7, 1, 2 ]);
+							const tmpNatural = tmpCalls.find((pCall) => pCall.Filter.indexOf('~NIN~') > -1);
+							const tmpPriority = tmpCalls.find((pCall) => pCall.Filter.indexOf('~INN~') > -1);
+							Expect(tmpNatural, 'natural query present').to.not.equal(undefined);
+							Expect(tmpNatural.Filter).to.contain('FBL~IDAuthor~NIN~7');
+							Expect(tmpPriority, 'priority INN fetch present').to.not.equal(undefined);
+							Expect(tmpPriority.Filter).to.contain('FBL~IDAuthor~INN~7');
+							return fDone();
+						}).catch(fDone);
+					}
+				);
+				test
+				(
+					'does not prepend on later pages but still excludes the pinned ids',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						const tmpCalls = withPinnedEntityProvider(tmpProvider, [ { IDAuthor: 7, Name: 'Pinned' } ], [ { IDAuthor: 3, Name: 'C' } ]);
+						const tmpDataProvider = tmpProvider.createEntityDataProvider({ Entity: 'Author', ValueField: 'IDAuthor', TextField: 'Name', SearchFields: [ 'Name' ], PriorityValues: [ 7 ], PageSize: 25 });
+						tmpDataProvider('', 1).then((pResult) =>
+						{
+							Expect(pResult.results.map((pRow) => pRow.Value)).to.deep.equal([ 3 ]);
+							Expect(tmpCalls.some((pCall) => pCall.Filter.indexOf('FBL~IDAuthor~NIN~7') > -1)).to.equal(true);
+							Expect(tmpCalls.some((pCall) => pCall.Filter.indexOf('~INN~') > -1)).to.equal(false);
+							return fDone();
+						}).catch(fDone);
+					}
+				);
+				test
+				(
+					'defers to natural relevance when a search term is present (no pin, no exclusion)',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						const tmpCalls = withPinnedEntityProvider(tmpProvider, [ { IDAuthor: 7, Name: 'Pinned' } ], [ { IDAuthor: 9, Name: 'Grace' } ]);
+						const tmpDataProvider = tmpProvider.createEntityDataProvider({ Entity: 'Author', ValueField: 'IDAuthor', TextField: 'Name', SearchFields: [ 'Name' ], PriorityValues: [ 7 ] });
+						tmpDataProvider('grace', 0).then((pResult) =>
+						{
+							Expect(pResult.results.map((pRow) => pRow.Value)).to.deep.equal([ 9 ]);
+							Expect(tmpCalls.every((pCall) => pCall.Filter.indexOf('~NIN~') === -1), 'no NIN in search mode').to.equal(true);
+							Expect(tmpCalls.every((pCall) => pCall.Filter.indexOf('~INN~') === -1), 'no INN prepend in search mode').to.equal(true);
+							return fDone();
+						}).catch(fDone);
+					}
+				);
+				test
+				(
+					'accepts a function resolver for PriorityValues',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						withPinnedEntityProvider(tmpProvider, [ { IDAuthor: 7, Name: 'Pinned' } ], [ { IDAuthor: 1, Name: 'A' } ]);
+						const tmpDataProvider = tmpProvider.createEntityDataProvider({ Entity: 'Author', ValueField: 'IDAuthor', TextField: 'Name', SearchFields: [ 'Name' ], PriorityValues: () => Promise.resolve([ 7 ]) });
+						tmpDataProvider('', 0).then((pResult) =>
+						{
+							Expect(pResult.results[0].Value).to.equal(7);
+							return fDone();
+						}).catch(fDone);
+					}
+				);
+			}
+		);
+
+		suite
+		(
 			'Clearable (AllowClear)',
 			() =>
 			{

@@ -246,6 +246,12 @@ class PictProviderPicker extends libPictProvider
 	 *       label, e.g. `{~DWTF:Record.NameFull:...~} ({~D:Record.Email~})`.
 	 *   - PageSize {number} - records per page (default 20).
 	 *   - Sort {string} - optional field to sort ascending (adds `FSF~<field>~ASC~0`).
+	 *   - PriorityValues {Array<any>|function} - optional pin-to-top: value-ids (or a `() => ids |
+	 *       Promise<ids>` resolver) to float to the top of the FIRST unfiltered page, in the given order.
+	 *       BROWSE-only — a search term defers entirely to natural relevance so a pin never hides a typed-for
+	 *       record. The resolver is memoized per provider instance (it may hit the network — e.g. "this line
+	 *       item's project's prime contractor"); pinned ids are held out of the natural flow (NIN) so they
+	 *       never double on a later page, and pinned rows are fetched + composed under the same scope + cull.
 	 *   - BaseFilter {string|Array<string>|Object|function} - optional always-applied FoxHound filter
 	 *     (AND), e.g. `FBV~IDCustomer~EQ~1`. May be a **function** `(searchTerm, page) => string|string[]|Object`
 	 *     evaluated on every search — the generic hook for host-injected CONTEXTUAL scoping (project,
@@ -302,7 +308,55 @@ class PictProviderPicker extends libPictProvider
 			? (this.backOffState[pStateKey] = this.backOffState[pStateKey] || { Dropped: false, Term: null })
 			: { Dropped: false, Term: null };
 
-		return (pSearchTerm, pPage) => new Promise((resolve, reject) =>
+		// Pin-to-top: an optional set of value-ids — or a `() => ids | Promise<ids>` resolver — that float
+		// to the top of the FIRST unfiltered page. A BROWSE-only affordance: with a search term, the query
+		// defers entirely to natural relevance so the pin never hides a typed-for record. The pinned ids are
+		// resolved ONCE per provider instance (the resolver may hit the network — e.g. "this line item's
+		// project's prime contractor"), kept OUT of the natural flow (NIN) so they never double on a later
+		// page, and their rows are fetched + composed exactly like the rest (honoring the scope + cull).
+		const tmpPriorityConfig = pConfig.PriorityValues || false;
+		let tmpPriorityIDsPromise = null;
+		const fResolvePriorityIDs = () =>
+		{
+			if (tmpPriorityIDsPromise) { return tmpPriorityIDsPromise; }
+			let tmpResolved = [];
+			try { tmpResolved = (typeof tmpPriorityConfig === 'function') ? tmpPriorityConfig() : tmpPriorityConfig; }
+			catch (pError) { this.pict.log.warn(`Pict-Section-Picker [${tmpEntity}] PriorityValues resolver threw; ignoring pin-to-top.`, pError); tmpResolved = []; }
+			tmpPriorityIDsPromise = Promise.resolve(tmpResolved)
+				.then((pIDs) => (Array.isArray(pIDs) ? pIDs : []).filter((pID) => (pID !== undefined) && (pID !== null) && (pID !== '')))
+				.catch((pError) => { this.pict.log.warn(`Pict-Section-Picker [${tmpEntity}] PriorityValues resolver rejected; ignoring pin-to-top.`, pError); return []; });
+			return tmpPriorityIDsPromise;
+		};
+		// Fetch + compose the pinned rows themselves — one INN read under the mandatory scope (so an
+		// out-of-scope or already-culled pin never appears), ordered by the resolver's id order.
+		const fFetchPriorityOptions = (pPriorityIDs, pScopeFilter) => new Promise((resolve) =>
+		{
+			const tmpStanzas = [];
+			if (pScopeFilter) { tmpStanzas.push(pScopeFilter); }
+			tmpStanzas.push(`FBL~${tmpValueField}~INN~${pPriorityIDs.map((pID) => encodeURIComponent(pID)).join(',')}`);
+			if (tmpSort) { tmpStanzas.push(`FSF~${tmpSort}~ASC~0`); }
+			this.pict.EntityProvider.getEntitySetPage(tmpEntity, tmpStanzas.filter(Boolean).join('~'), 0, pPriorityIDs.length,
+				(pError, pRecords) =>
+				{
+					if (pError) { this.pict.log.warn(`Pict-Section-Picker [${tmpEntity}] pin-to-top fetch failed; skipping.`, pError); return resolve([]); }
+					this._decorateRecordsWithJoin(Array.isArray(pRecords) ? pRecords : [], tmpJoinConfig).then((pDecorated) =>
+					{
+						const tmpByID = {};
+						for (let i = 0; i < pDecorated.length; i++) { tmpByID[String(pDecorated[i][tmpValueField])] = pDecorated[i]; }
+						const tmpOptions = pPriorityIDs
+							.map((pID) => tmpByID[String(pID)])
+							.filter((pRecord) => !!pRecord)
+							.map((pRecord) => tmpMapRecord
+								? tmpMapRecord(pRecord)
+								: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
+						return resolve(tmpOptions);
+					});
+				});
+		});
+
+		// One page of the natural (non-pinned) query. `pPriorityIDs` is empty except on an unfiltered browse
+		// with a pin configured — where those ids are excluded here (NIN) and prepended in fFinish.
+		const fRunQuery = (pSearchTerm, pPage, pPriorityIDs) => new Promise((resolve, reject) =>
 		{
 			if (!this.pict.EntityProvider || typeof this.pict.EntityProvider.getEntitySetPage !== 'function')
 			{
@@ -332,6 +386,9 @@ class PictProviderPicker extends libPictProvider
 				if (tmpScope.Filter) { tmpStanzas.push(tmpScope.Filter); }
 				if (pIncludeBackOff && tmpScope.BackOffFilter) { tmpStanzas.push(tmpScope.BackOffFilter); }
 				if (pSearchTerm) { tmpStanzas.push(this.buildSearchFilter(tmpSearchFields, pSearchTerm)); }
+				// Pin-to-top: keep the pinned rows OUT of the natural flow so they appear only at the top
+				// (prepended in fFinish), never doubled on a later page.
+				if (pPriorityIDs.length > 0) { tmpStanzas.push(`FBL~${tmpValueField}~NIN~${pPriorityIDs.map((pID) => encodeURIComponent(pID)).join(',')}`); }
 				if (tmpSort) { tmpStanzas.push(`FSF~${tmpSort}~ASC~0`); }
 				return tmpStanzas.filter(Boolean).join('~');
 			};
@@ -347,7 +404,14 @@ class PictProviderPicker extends libPictProvider
 						? tmpMapRecord(pRecord)
 						: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
 					// hasMore: a full page came back, so there is (probably) another. Avoids a Count round-trip.
-					return resolve({ results: tmpResults, hasMore: (tmpList.length >= tmpPageSize) });
+					// Pin-to-top: on the first browse page, prepend the pinned options ahead of the natural
+					// results (which excluded them via NIN above).
+					if (pPriorityIDs.length < 1 || tmpPageIndex !== 0)
+					{
+						return resolve({ results: tmpResults, hasMore: (tmpList.length >= tmpPageSize) });
+					}
+					return fFetchPriorityOptions(pPriorityIDs, tmpScope.Filter).then((pPinned) =>
+						resolve({ results: pPinned.concat(tmpResults), hasMore: (tmpList.length >= tmpPageSize) }));
 				});
 			};
 
@@ -374,6 +438,18 @@ class PictProviderPicker extends libPictProvider
 					return fFinish(tmpList);
 				});
 		});
+
+		// No pin configured → the plain per-page provider. Otherwise resolve the pinned ids first (browse
+		// only — a search term defers entirely to natural relevance) and run the query with them.
+		if (!tmpPriorityConfig)
+		{
+			return (pSearchTerm, pPage) => fRunQuery(pSearchTerm, pPage, []);
+		}
+		return (pSearchTerm, pPage) =>
+		{
+			if (pSearchTerm) { return fRunQuery(pSearchTerm, pPage, []); }
+			return fResolvePriorityIDs().then((pIDs) => fRunQuery(pSearchTerm, pPage, pIDs));
+		};
 	}
 
 	/**
