@@ -1,6 +1,25 @@
 const libPictView = require('pict-view');
 
 /**
+ * HTML-escape a value so it is safe both inside a double-quoted attribute and as element text content.
+ * Option values / labels can carry characters like the inch mark (`1"`) or an apostrophe that would
+ * otherwise terminate an attribute or an inline handler string. Every user value the templates drop into
+ * an attribute or a text node is passed through this; the value a handler actually operates on is read
+ * back — the browser decodes it — from a `data-` attribute rather than being inlined into the onclick.
+ * @param {any} pValue
+ * @return {string}
+ */
+function escapeHTML(pValue)
+{
+	return String((pValue === null || pValue === undefined) ? '' : pValue)
+		.replace(/&/g, '&amp;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;');
+}
+
+/**
  * The theme custom properties the widget paints from. Copied onto a portaled panel so it keeps the
  * host's theme after it stops inheriting from a scoped container (see _portalPop / _restorePop).
  * @type {Array<string>}
@@ -146,7 +165,7 @@ const _DEFAULT_CONFIGURATION =
 		{
 			Hash: 'Pict-Section-Picker-Single',
 			Template: /*html*/`
-	<span class="pps-valuebox">{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-value{~NE:Record.NoValue^ pps-placeholder~}">{~D:Record.DisplayText~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}{~TS:Pict-Section-Picker-CardInfo:Record.CardSlot~}</span>
+	<span class="pps-valuebox">{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-value{~NE:Record.NoValue^ pps-placeholder~}">{~D:Record.DisplayTextAttr~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}{~TS:Pict-Section-Picker-CardInfo:Record.CardSlot~}</span>
 `
 		},
 		{
@@ -167,7 +186,7 @@ const _DEFAULT_CONFIGURATION =
 			// chip never bubbles up to the control's open/close toggle.
 			Hash: 'Pict-Section-Picker-Chip',
 			Template: /*html*/`
-	<span class="pps-chip">{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-chip-text" title="{~D:Record.Text~}">{~D:Record.Text~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}{~TS:Pict-Section-Picker-CardInfo:Record.CardSlot~}<span class="pps-chip-x" onclick="event.stopPropagation(); _Pict.views['{~D:Record.PickerHash~}'].removeChip('{~D:Record.ValueKey~}')">{~I:Close~}</span></span>
+	<span class="pps-chip">{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-chip-text" title="{~D:Record.TextAttr~}">{~D:Record.TextAttr~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}{~TS:Pict-Section-Picker-CardInfo:Record.CardSlot~}<span class="pps-chip-x" data-pps-valuekey="{~D:Record.ValueKeyAttr~}" onclick="event.stopPropagation(); _Pict.views['{~D:Record.PickerHash~}'].removeChipFromElement(this)">{~I:Close~}</span></span>
 `
 		},
 		{
@@ -224,7 +243,7 @@ const _DEFAULT_CONFIGURATION =
 			// {~I:~}/{~D:~} tags parse (unlike inside an {~NE:~}).
 			Hash: 'Pict-Section-Picker-Create',
 			Template: /*html*/`
-	<button type="button" class="pps-create" onclick="_Pict.views['{~D:Record.PickerHash~}'].createFromSearch()"><span class="pps-create-ic">{~I:Plus~}</span><span>Create &ldquo;{~D:Record.Term~}&rdquo;</span></button>
+	<button type="button" class="pps-create" onclick="_Pict.views['{~D:Record.PickerHash~}'].createFromSearch()"><span class="pps-create-ic">{~I:Plus~}</span><span>Create &ldquo;{~D:Record.TermAttr~}&rdquo;</span></button>
 `
 		},
 		{
@@ -238,9 +257,9 @@ const _DEFAULT_CONFIGURATION =
 		{
 			Hash: 'Pict-Section-Picker-Option',
 			Template: /*html*/`
-	<button type="button" class="pps-option{~NE:Record.Selected^ pps-selected~}{~NE:Record.Highlight^ pps-highlight~}" onclick="_Pict.views['{~D:Record.PickerHash~}'].select('{~D:Record.ValueKey~}')">
+	<button type="button" class="pps-option{~NE:Record.Selected^ pps-selected~}{~NE:Record.Highlight^ pps-highlight~}" data-pps-valuekey="{~D:Record.ValueKeyAttr~}" onclick="_Pict.views['{~D:Record.PickerHash~}'].selectFromElement(this)">
 		<span class="pps-option-check{~NE:Record.NotSelected^ pps-hidden~}">{~I:Check~}</span>
-		{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-option-label" title="{~D:Record.Text~}">{~D:Record.Text~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}
+		{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-option-label" title="{~D:Record.TextAttr~}">{~D:Record.TextAttr~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}
 	</button>
 `
 		},
@@ -259,7 +278,7 @@ const _DEFAULT_CONFIGURATION =
 			// stopPropagation so it never toggles the control or removes a chip.
 			Hash: 'Pict-Section-Picker-CardInfo',
 			Template: /*html*/`
-		<span class="pps-card-info" title="Preview" onclick="event.stopPropagation(); _Pict.providers.RecordSetCardManager.openCard('{~D:Record.Entity~}', '{~D:Record.Value~}', this)">{~I:Info~}</span>
+		<span class="pps-card-info" title="Preview" data-pps-entity="{~D:Record.EntityAttr~}" data-pps-value="{~D:Record.ValueAttr~}" onclick="event.stopPropagation(); _Pict.views['{~D:Record.PickerHash~}'].openCardFromElement(this)">{~I:Info~}</span>
 `
 		},
 		{
@@ -287,7 +306,7 @@ const _DEFAULT_CONFIGURATION =
 		{
 			// One checkbox row in the chooser. The label wraps the input so a click anywhere toggles it.
 			Hash: 'Pict-Section-Picker-DecorateField',
-			Template: /*html*/`<label class="pps-decorate-opt"><input type="checkbox"{~NE:Record.Checked^ checked~} onclick="_Pict.views['{~D:Record.PickerHash~}'].toggleDecorateField('{~D:Record.Field~}')"><span class="pps-decorate-name">{~D:Record.Field~}</span></label>`
+			Template: /*html*/`<label class="pps-decorate-opt"><input type="checkbox"{~NE:Record.Checked^ checked~} data-pps-field="{~D:Record.FieldAttr~}" onclick="_Pict.views['{~D:Record.PickerHash~}'].toggleDecorateFieldFromElement(this)"><span class="pps-decorate-name">{~D:Record.FieldAttr~}</span></label>`
 		},
 	],
 
@@ -791,7 +810,9 @@ class PictViewPicker extends libPictView
 			return Object.assign({
 				PickerHash: this.options.PickerHash,
 				ValueKey: String(pOption.Value),
+				ValueKeyAttr: escapeHTML(String(pOption.Value)),
 				Text: pOption.Text,
+				TextAttr: escapeHTML(pOption.Text),
 				Selected: tmpIsSelected,
 				NotSelected: !tmpIsSelected,
 				Highlight: (pIndex === this._highlight),
@@ -818,7 +839,7 @@ class PictViewPicker extends libPictView
 		const tmpTerm = (this._search || '').trim();
 		const tmpCanCreate = (typeof this.options.OnCreate === 'function') && tmpTerm.length > 0
 			&& !this._sourceRows().some((pRow) => String(pRow.Text).trim().toLowerCase() === tmpTerm.toLowerCase());
-		tmpState.CreateSlot = tmpCanCreate ? [ { PickerHash: this.options.PickerHash, Term: tmpTerm } ] : [];
+		tmpState.CreateSlot = tmpCanCreate ? [ { PickerHash: this.options.PickerHash, Term: tmpTerm, TermAttr: escapeHTML(tmpTerm) } ] : [];
 
 		tmpState.PickerHash = this.options.PickerHash;
 		tmpState.IsMulti = tmpMulti;
@@ -842,7 +863,7 @@ class PictViewPicker extends libPictView
 		tmpState.DecoratePanelSlot = (tmpDecorate && this._decorationOpen)
 			? [ {
 				PickerHash: this.options.PickerHash,
-				Fields: tmpDecorateFields.map((pField) => ({ PickerHash: this.options.PickerHash, Field: pField, Checked: (this._decorationFields.indexOf(pField) >= 0) })),
+				Fields: tmpDecorateFields.map((pField) => ({ PickerHash: this.options.PickerHash, Field: pField, FieldAttr: escapeHTML(pField), Checked: (this._decorationFields.indexOf(pField) >= 0) })),
 				NoFields: (tmpDecorateFields.length === 0),
 			} ]
 			: [];
@@ -876,7 +897,7 @@ class PictViewPicker extends libPictView
 			{
 				const tmpRecord = this._lookupRecord(pVal);
 				return Object.assign(
-					{ PickerHash: this.options.PickerHash, ValueKey: String(pVal), Text: tmpRecord ? tmpRecord.Text : String(pVal), CardSlot: tmpCardEnabled ? [ { Entity: tmpCardEntity, Value: String(pVal) } ] : [] },
+					{ PickerHash: this.options.PickerHash, ValueKey: String(pVal), ValueKeyAttr: escapeHTML(String(pVal)), Text: tmpRecord ? tmpRecord.Text : String(pVal), TextAttr: escapeHTML(tmpRecord ? tmpRecord.Text : String(pVal)), CardSlot: tmpCardEnabled ? [ { PickerHash: this.options.PickerHash, Entity: tmpCardEntity, EntityAttr: escapeHTML(tmpCardEntity), Value: String(pVal), ValueAttr: escapeHTML(String(pVal)) } ] : [] },
 					this._tagSlots(this._recordTags(tmpRecord), tmpTagLast));
 			});
 			tmpState.SingleSlot = [];
@@ -891,11 +912,13 @@ class PictViewPicker extends libPictView
 			const tmpValue = this.getValue();
 			const tmpHasValue = (tmpValue !== undefined && tmpValue !== null && tmpValue !== '');
 			const tmpSelected = this._lookupRecord(tmpValue);
+			const tmpDisplayText = tmpSelected ? tmpSelected.Text : (this._selectedText || (tmpHasValue ? String(tmpValue) : this.options.Placeholder));
 			tmpState.SingleSlot = [ Object.assign({
 				PickerHash: this.options.PickerHash,
-				DisplayText: tmpSelected ? tmpSelected.Text : (this._selectedText || (tmpHasValue ? String(tmpValue) : this.options.Placeholder)),
+				DisplayText: tmpDisplayText,
+				DisplayTextAttr: escapeHTML(tmpDisplayText),
 				NoValue: !tmpHasValue,
-				CardSlot: (tmpCardEnabled && tmpHasValue) ? [ { Entity: tmpCardEntity, Value: String(tmpValue) } ] : [],
+				CardSlot: (tmpCardEnabled && tmpHasValue) ? [ { PickerHash: this.options.PickerHash, Entity: tmpCardEntity, EntityAttr: escapeHTML(tmpCardEntity), Value: String(tmpValue), ValueAttr: escapeHTML(String(tmpValue)) } ] : [],
 			}, this._tagSlots(this._recordTags(tmpSelected), tmpTagLast)) ];
 			tmpState.MultiSlot = [];
 		}
@@ -1324,6 +1347,49 @@ class PictViewPicker extends libPictView
 			pEvent.preventDefault();
 			this.close();
 		}
+	}
+
+	/**
+	 * Read a `data-` attribute off a clicked element. The option / chip / card / decorate handlers carry
+	 * the value they operate on in a data attribute instead of inlining it into the onclick string, so a
+	 * value containing a quote (e.g. `1"`) can never break the attribute or the handler; the browser has
+	 * already decoded the attribute back to the raw value by the time we read it here.
+	 * @param {any} pElement - the clicked DOM element (`this` inside the inline handler).
+	 * @param {string} pAttribute - the data attribute to read.
+	 * @return {string|null}
+	 */
+	_readElementData(pElement, pAttribute)
+	{
+		return (pElement && typeof pElement.getAttribute === 'function') ? pElement.getAttribute(pAttribute) : null;
+	}
+
+	/** Option-row click shim: select the value carried in `data-pps-valuekey`. @param {any} pElement */
+	selectFromElement(pElement)
+	{
+		const tmpValueKey = this._readElementData(pElement, 'data-pps-valuekey');
+		if (tmpValueKey !== null) { this.select(tmpValueKey); }
+	}
+
+	/** Chip-× click shim: remove the value carried in `data-pps-valuekey`. @param {any} pElement */
+	removeChipFromElement(pElement)
+	{
+		const tmpValueKey = this._readElementData(pElement, 'data-pps-valuekey');
+		if (tmpValueKey !== null) { this.removeChip(tmpValueKey); }
+	}
+
+	/** Preview-card ⓘ click shim: open the card for the entity/value carried in data attributes. @param {any} pElement */
+	openCardFromElement(pElement)
+	{
+		const tmpManager = this.pict.providers.RecordSetCardManager;
+		if (!tmpManager || typeof tmpManager.openCard !== 'function') { return; }
+		tmpManager.openCard(this._readElementData(pElement, 'data-pps-entity'), this._readElementData(pElement, 'data-pps-value'), pElement);
+	}
+
+	/** Field-decoration checkbox click shim: toggle the field carried in `data-pps-field`. @param {any} pElement */
+	toggleDecorateFieldFromElement(pElement)
+	{
+		const tmpField = this._readElementData(pElement, 'data-pps-field');
+		if (tmpField !== null) { this.toggleDecorateField(tmpField); }
 	}
 
 	/**
