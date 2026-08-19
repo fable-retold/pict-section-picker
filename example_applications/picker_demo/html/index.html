@@ -178,6 +178,28 @@
 				<div id="ScopeValue" class="demo-value"></div>
 			</div>
 
+			<!-- Escaped / special characters: option values with a " (inch mark), apostrophe, & or < that used
+			     to break the inline handler. Both pickers are pre-seeded so the value box and chips render
+			     their escaped values on load. See the note. -->
+			<div class="demo-field" style="margin-top: 1.75rem;">
+				<label>Special characters <span class="demo-tag">quotes / apostrophes in values · regression</span></label>
+				<div id="SpecialCharsPicker"></div>
+				<div id="SpecialCharsValue" class="demo-value"></div>
+				<div id="SpecialCharsMultiPicker" style="margin-top: 0.75rem;"></div>
+				<div id="SpecialCharsMultiValue" class="demo-value"></div>
+				<p class="demo-note">
+					These options carry a double quote (<code>1&quot;</code>, <code>2&quot;</code> — inch marks), an
+					apostrophe and ampersand (<code>O'Brien &amp; Sons</code>), and <code>&lt;</code>. The value the
+					handler acts on rides in an HTML-escaped <code>data-</code> attribute it reads back, so it can
+					never break the attribute or the inline handler. Open the dropdown, pick options, remove chips —
+					the readout shows the value round-trips <em>exactly</em>. Before this fix the raw value was
+					inlined into the <code>onclick</code> (<code>select('1&quot;')</code>), so the <code>&quot;</code>
+					closed the attribute and the console threw <code>Uncaught SyntaxError: Invalid or unexpected
+					token</code> the moment the option list rendered. To confirm the break: <code>git stash</code> the
+					<code>PictView-Picker.js</code> fix, rebuild this demo, and reload.
+				</p>
+			</div>
+
 			<div class="demo-filler"></div>
 		</div>
 		<!-- Load the application bundle -->

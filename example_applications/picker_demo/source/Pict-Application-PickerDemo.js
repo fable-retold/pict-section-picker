@@ -348,6 +348,56 @@ class PickerDemoApplication extends libPictApplication
 		this.pict.views['ScopeItemPicker'].render();
 		this._showScope();
 
+		// --- Escaped / special-character values (regression): option values carrying a double quote
+		//     (inch marks like 1"), an apostrophe, an ampersand, or a `<`. Before the data-attribute fix
+		//     the raw value was inlined into the option / chip onclick (`select('1"')`), so the `"` closed
+		//     the attribute and the browser threw "Uncaught SyntaxError: Invalid or unexpected token" the
+		//     moment the option list rendered — the control was dead. Now the value rides in an HTML-escaped
+		//     `data-` attribute the handler reads back, so it round-trips exactly. Both are pre-seeded so the
+		//     value box (single) and the chips (multi) render their escaped values on load, not just on open.
+		const _SpecialOptions =
+		[
+			{ Value: '1"', Text: '1"' },
+			{ Value: '2"', Text: '2"' },
+			{ Value: '4"', Text: '4"' },
+			{ Value: '6"', Text: '6"' },
+			{ Value: 'O\'Brien & Sons', Text: 'O\'Brien & Sons' },
+			{ Value: 'a <b> "wide"', Text: 'a <b> "wide"' },
+		];
+		this.pict.AppData.Demo.SpecialChars = '2"';
+		this.pict.AppData.Demo.SpecialCharsMulti = [ '1"', 'O\'Brien & Sons' ];
+		const fEscapeDemo = (pValue) => String((pValue === null || pValue === undefined) ? '' : pValue)
+			.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+		const fSpecialReadout = (pSelector, pValue) =>
+		{
+			const tmpText = Array.isArray(pValue)
+				? (pValue.length ? pValue.map(fEscapeDemo).join(', ') : '(none)')
+				: ((pValue === '' || pValue === undefined || pValue === null) ? '(none)' : fEscapeDemo(pValue));
+			this.pict.ContentAssignment.assignContent(pSelector, `Selected value: <code>${tmpText}</code>`);
+		};
+		tmpPicker.createPicker('SpecialCharsPicker',
+			{
+				DestinationAddress: '#SpecialCharsPicker',
+				ValueAddress: 'AppData.Demo.SpecialChars',
+				Placeholder: 'Pick a width…',
+				Options: _SpecialOptions,
+				OnChange: (pValue) => fSpecialReadout('#SpecialCharsValue', pValue),
+			});
+		this.pict.views['SpecialCharsPicker'].render();
+		fSpecialReadout('#SpecialCharsValue', this.pict.AppData.Demo.SpecialChars);
+
+		tmpPicker.createPicker('SpecialCharsMultiPicker',
+			{
+				Mode: 'multi',
+				DestinationAddress: '#SpecialCharsMultiPicker',
+				ValueAddress: 'AppData.Demo.SpecialCharsMulti',
+				Placeholder: 'Pick widths…',
+				Options: _SpecialOptions,
+				OnChange: (pValue) => fSpecialReadout('#SpecialCharsMultiValue', pValue),
+			});
+		this.pict.views['SpecialCharsMultiPicker'].render();
+		fSpecialReadout('#SpecialCharsMultiValue', this.pict.AppData.Demo.SpecialCharsMulti);
+
 		return super.onAfterInitializeAsync(fCallback);
 	}
 
