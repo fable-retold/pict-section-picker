@@ -73,6 +73,9 @@ const _DEFAULT_CONFIGURATION =
 	// When a function, the widget searches + paginates through it instead of the static Options list.
 	DataProvider: false,
 	PageSize: 20,
+	// Async only: minimum trimmed search length before a server query fires (browse-on-open + new
+	// search). 0 = always query (the common default). >0 suppresses the request below the threshold.
+	MinimumSearchLength: 0,
 	// Optional ResolveValue(value) => Promise<{Value,Text}> to resolve the display text of a pre-set
 	// value in async mode (e.g. fetch the entity for a bound ID so the control shows its name).
 	ResolveValue: false,
@@ -947,6 +950,19 @@ class PictViewPicker extends libPictView
 	_loadPage(pPage, pAppend)
 	{
 		if (!this._isAsync()) { return; }
+		// Minimum-search-length gate: below the threshold, don't hit the server. First page only
+		// (browse-on-open + new search); "Load more" always already has an at-length term.
+		const tmpMinLength = this.options.MinimumSearchLength || 0;
+		if (tmpMinLength > 0 && !pAppend && pPage === 0 && (this._search || '').trim().length < tmpMinLength)
+		{
+			this._loadedResults = [];
+			this._hasMore = false;
+			this._page = 0;
+			this._loaded = true;
+			this._loading = false;
+			this._renderList();
+			return;
+		}
 		this._loading = true;
 		this._renderList();
 		const tmpSearchAtRequest = this._search;

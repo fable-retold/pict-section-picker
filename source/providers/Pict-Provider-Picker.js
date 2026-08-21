@@ -211,24 +211,33 @@ class PictProviderPicker extends libPictProvider
 	/**
 	 * Build the Meadow FoxHound filter for a search term across one or more fields.
 	 *
-	 * Single field → a clean AND-connected `FBV~Field~LK~%term%`. Multiple fields → the LIKEs are
-	 * OR'd together inside a paren group (`FOP…FCP`) so the OR can't bleed into a sibling AND base
-	 * filter. The term is `encodeURIComponent`-wrapped exactly as pict-section-recordset does, so the
-	 * structural `~` separators stay literal in the URL path while the value is escaped.
+	 * The term is tokenized on whitespace and the per-token clauses are AND'd (concatenated) — so
+	 * "john smith" matches a record with those words in any order / across fields, mirroring the
+	 * legacy select2 behavior. Per token: single field → `FBV~Field~LK~%token%`; multiple fields →
+	 * the LIKEs are OR'd inside a paren group (`FOP…FCP`) so the OR can't bleed into a sibling AND
+	 * base filter. Each token is `encodeURIComponent`-wrapped exactly as pict-section-recordset does,
+	 * so the structural `~` separators stay literal in the URL path while the value is escaped.
 	 *
 	 * @param {Array<string>} pSearchFields - The entity fields to LIKE-match.
-	 * @param {string} pTerm - The (raw) search term.
-	 * @return {string} The FoxHound filter stanza(s).
+	 * @param {string} pTerm - The (raw) search term; whitespace-delimited into AND'd tokens.
+	 * @return {string} The FoxHound filter stanza(s), or '' for an all-whitespace/empty term.
 	 */
 	buildSearchFilter(pSearchFields, pTerm)
 	{
-		const tmpEncoded = encodeURIComponent(`%${pTerm}%`);
-		if (pSearchFields.length === 1)
+		const tmpTokens = String(pTerm == null ? '' : pTerm).split(/\s+/).map((pToken) => pToken.trim()).filter((pToken) => pToken.length > 0);
+		if (tmpTokens.length === 0) { return ''; }
+		const fTokenClause = (pToken) =>
 		{
-			return `FBV~${pSearchFields[0]}~LK~${tmpEncoded}`;
-		}
-		const tmpInner = pSearchFields.map((pField, pIndex) => `${pIndex === 0 ? 'FBV' : 'FBVOR'}~${pField}~LK~${tmpEncoded}`).join('~');
-		return `FOP~0~(~0~${tmpInner}~FCP~0~)~0`;
+			const tmpEncoded = encodeURIComponent(`%${pToken}%`);
+			if (pSearchFields.length === 1)
+			{
+				return `FBV~${pSearchFields[0]}~LK~${tmpEncoded}`;
+			}
+			const tmpInner = pSearchFields.map((pField, pIndex) => `${pIndex === 0 ? 'FBV' : 'FBVOR'}~${pField}~LK~${tmpEncoded}`).join('~');
+			return `FOP~0~(~0~${tmpInner}~FCP~0~)~0`;
+		};
+		// Concatenated stanzas AND together, so every token must match somewhere.
+		return tmpTokens.map(fTokenClause).join('~');
 	}
 
 	/**

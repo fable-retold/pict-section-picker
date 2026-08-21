@@ -479,6 +479,45 @@ suite
 						return fDone();
 					}
 				);
+				test
+				(
+					'ANDs one LIKE per token for a multi-word single-field term',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						const tmpFoo = encodeURIComponent('%foo%');
+						const tmpBar = encodeURIComponent('%bar%');
+						Expect(tmpProvider.buildSearchFilter([ 'Name' ], 'foo bar')).to.equal(`FBV~Name~LK~${tmpFoo}~FBV~Name~LK~${tmpBar}`);
+						return fDone();
+					}
+				);
+				test
+				(
+					'ANDs one OR-group per token for a multi-word multi-field term',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						const tmpJohn = encodeURIComponent('%john%');
+						const tmpSmith = encodeURIComponent('%smith%');
+						const tmpFilter = tmpProvider.buildSearchFilter([ 'NameFirst', 'NameLast' ], 'john smith');
+						Expect(tmpFilter).to.equal(`FOP~0~(~0~FBV~NameFirst~LK~${tmpJohn}~FBVOR~NameLast~LK~${tmpJohn}~FCP~0~)~0~FOP~0~(~0~FBV~NameFirst~LK~${tmpSmith}~FBVOR~NameLast~LK~${tmpSmith}~FCP~0~)~0`);
+						return fDone();
+					}
+				);
+				test
+				(
+					'collapses extra whitespace and returns empty for a blank term',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						const tmpFoo = encodeURIComponent('%foo%');
+						const tmpBar = encodeURIComponent('%bar%');
+						Expect(tmpProvider.buildSearchFilter([ 'Name' ], '  foo   bar  ')).to.equal(`FBV~Name~LK~${tmpFoo}~FBV~Name~LK~${tmpBar}`);
+						Expect(tmpProvider.buildSearchFilter([ 'Name' ], '   ')).to.equal('');
+						Expect(tmpProvider.buildSearchFilter([ 'Name' ], '')).to.equal('');
+						return fDone();
+					}
+				);
 			}
 		);
 
@@ -769,6 +808,42 @@ suite
 						tmpMulti.clearValue();
 						Expect(tmpMulti.getValue()).to.deep.equal([ 'us' ], 'clearValue is a no-op in multi mode');
 						return fDone();
+					}
+				);
+			}
+		);
+
+		suite
+		(
+			'View MinimumSearchLength gate',
+			() =>
+			{
+				test
+				(
+					'does not query below the threshold, then queries at/above it',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						let tmpCalls = 0;
+						const tmpView = tmpProvider.createPicker('MinLen-Gate',
+							{
+								MinimumSearchLength: 3,
+								DataProvider: () => { tmpCalls++; return Promise.resolve({ results: [], hasMore: false }); },
+							});
+						// Browse-on-open (empty term) and a 2-char term are below the threshold: no server query.
+						tmpView._search = '';
+						tmpView._loadPage(0, false);
+						tmpView._search = 'ab';
+						tmpView._loadPage(0, false);
+						Expect(tmpCalls).to.equal(0, 'no query below MinimumSearchLength');
+						// At the threshold the DataProvider fires (on a microtask).
+						tmpView._search = 'abc';
+						tmpView._loadPage(0, false);
+						setTimeout(() =>
+						{
+							Expect(tmpCalls).to.equal(1, 'queries at/above MinimumSearchLength');
+							return fDone();
+						}, 15);
 					}
 				);
 			}
