@@ -15,6 +15,43 @@
  */
 const libPictInputExtension = require('pict-section-form').PictInputExtensionProvider;
 
+/**
+ * The picker "nothing selected" sentinel per numeric descriptor DataType.
+ *
+ * A pict-section-form marshal reads values with manyfest's getValueByHash, which substitutes the
+ * DESCRIPTOR DEFAULT whenever the address is undefined — and, absent an explicit `Default`, that is
+ * manyfest's per-DataType default: '' for String but 0 for Number/Integer/Float. So a pristine
+ * `{ DataType: 'Number', InputType: 'Picker' }` field (an entity FK, virtually always) marshals in as
+ * 0, which the widget would otherwise paint as a literal "0" selection instead of the placeholder.
+ * Mapping the type to its sentinel makes the picker render empty for it. Display only — the model is
+ * untouched, so 0-means-unset stays a valid data pattern for solvers and exports.
+ *
+ * PreciseNumber ('0.0') is deliberately absent: it is a decimal-measurement type, not an id type.
+ * @type {Record<string, Array<any>>}
+ */
+const _NUMERIC_UNSET_SENTINELS =
+{
+	Number: [ 0 ],
+	Integer: [ 0 ],
+	Float: [ 0 ],
+};
+
+/**
+ * The values a descriptor's picker should PAINT as empty (see _NUMERIC_UNSET_SENTINELS). A descriptor
+ * overrides with `PictForm.EmptyValues` — its own sentinel list, or `[]` to opt out and show the raw 0.
+ *
+ * Exported because a host's READ/PRINT display provider must agree with the edit widget about what
+ * counts as unset; sharing the one function is what stops the two from drifting.
+ * @param {Record<string, any>} pInput - the pict-section-form input descriptor.
+ * @return {Array<any>}
+ */
+const resolveEmptyValues = (pInput) =>
+{
+	const tmpPictForm = (pInput && pInput.PictForm) || {};
+	if (Array.isArray(tmpPictForm.EmptyValues)) { return tmpPictForm.EmptyValues; }
+	return _NUMERIC_UNSET_SENTINELS[pInput && pInput.DataType] || [];
+};
+
 /** @type {Record<string, any>} */
 const _DEFAULT_CONFIGURATION =
 {
@@ -102,6 +139,12 @@ class PictInputTypePicker extends libPictInputExtension
 		return (pInput && pInput.PictForm && pInput.PictForm.BaseFilter) || '';
 	}
 
+	/** Overridable seam onto the shared {@link resolveEmptyValues}. @param {Record<string, any>} pInput @return {Array<any>} */
+	_resolveEmptyValues(pInput)
+	{
+		return resolveEmptyValues(pInput);
+	}
+
 	/** Build the picker config from a form input descriptor. */
 	_buildPickerConfig(pInput, pHostSelector, fOnChange)
 	{
@@ -131,6 +174,8 @@ class PictInputTypePicker extends libPictInputExtension
 			// EntityTag badge: the record field whose value becomes a Tag pill, ordered by EntityTagLast.
 			EntityTag: tmpPF.EntityTag,
 			TagLast: tmpPF.EntityTagLast,
+			// Numeric-descriptor "unset" sentinel(s) rendered as the placeholder rather than as a value.
+			EmptyValues: this._resolveEmptyValues(pInput),
 			// Per-search contextual scope — the generic hook the host fills.
 			BaseFilter: () => this.getContextualSearchFilters(pInput),
 			OnChange: fOnChange,
@@ -313,4 +358,5 @@ module.exports = PictInputTypePicker;
 module.exports.PictInputTypePicker = PictInputTypePicker;
 module.exports.registerPickerInputType = registerPickerInputType;
 module.exports.buildPickerInputTemplates = buildPickerInputTemplates;
+module.exports.resolveEmptyValues = resolveEmptyValues;
 module.exports.default_configuration = _DEFAULT_CONFIGURATION;

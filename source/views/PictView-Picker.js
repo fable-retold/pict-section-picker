@@ -112,6 +112,15 @@ const _DEFAULT_CONFIGURATION =
 	AllowFieldDecoration: false,
 	DecorationIgnoreFields: [],
 
+	// Values that mean "nothing is selected" for DISPLAY, on top of undefined/null/''. The widget still
+	// stores and returns whatever it was given — this only decides whether the control paints the
+	// placeholder instead of the raw value, so a host's sentinel never has to become a data change.
+	// The pict-section-form adapter seeds it with [0] for a Number/Integer/Float descriptor, whose
+	// pristine marshal value is manyfest's DataType default 0 rather than ''. A sentinel that DOES
+	// resolve to a real source row (a static option literally valued 0) is a genuine selection and is
+	// shown normally.
+	EmptyValues: [],
+
 	Templates:
 	[
 		{
@@ -399,12 +408,31 @@ class PictViewPicker extends libPictView
 		return this.pict.AppData.PictSectionPicker[this.options.PickerHash];
 	}
 
+	/**
+	 * True when a value should be PAINTED as "nothing selected" — undefined/null/'', or one of the
+	 * host's configured `EmptyValues` sentinels. Display-only: `_value` / getValue() keep the raw value,
+	 * so nothing here rewrites the host's model.
+	 *
+	 * The sentinel yields to reality: one that matches a real source row (a static option literally
+	 * valued 0, say) is a genuine selection and renders normally. Entity pickers skip the async resolve
+	 * for a sentinel entirely — there is no entity #0 to fetch.
+	 * @param {any} pValue @return {boolean}
+	 */
+	_isEmptyValue(pValue)
+	{
+		if (pValue === undefined || pValue === null || pValue === '') { return true; }
+		const tmpEmptyValues = this.options.EmptyValues;
+		if (!Array.isArray(tmpEmptyValues) || tmpEmptyValues.length < 1) { return false; }
+		if (!tmpEmptyValues.some((pEmpty) => String(pEmpty) === String(pValue))) { return false; }
+		return !this._lookupRecord(pValue);
+	}
+
 	/** Resolve display text for any pre-bound value(s) via the async ResolveValue hook, then repaint. */
 	_resolveInitialValues()
 	{
 		const tmpResolveOne = (pValue) =>
 		{
-			if (pValue === undefined || pValue === null || pValue === '') { return; }
+			if (this._isEmptyValue(pValue)) { return; }
 			Promise.resolve(this.options.ResolveValue(pValue)).then((pResolved) =>
 			{
 				if (pResolved && pResolved.Text)
@@ -511,7 +539,7 @@ class PictViewPicker extends libPictView
 		{
 			this._setValue(pValue);
 			this._selectedText = null;
-			this._seedSelectedRecords((pValue === undefined || pValue === null || pValue === '') ? [] : [ pValue ]);
+			this._seedSelectedRecords(this._isEmptyValue(pValue) ? [] : [ pValue ]);
 		}
 		this._reflectValue();
 		return this;
@@ -543,7 +571,7 @@ class PictViewPicker extends libPictView
 	{
 		const tmpMulti = this._isMulti();
 		const tmpValue = tmpMulti ? undefined : this.getValue();
-		const tmpHasValue = (tmpValue !== undefined && tmpValue !== null && tmpValue !== '');
+		const tmpHasValue = !this._isEmptyValue(tmpValue);
 		return [
 			tmpMulti,
 			!!this.options.ReadOnly,
@@ -561,7 +589,7 @@ class PictViewPicker extends libPictView
 	{
 		pValues.forEach((pVal) =>
 		{
-			if (pVal === undefined || pVal === null || pVal === '' || this._selectedRecords[String(pVal)]) { return; }
+			if (this._isEmptyValue(pVal) || this._selectedRecords[String(pVal)]) { return; }
 			const tmpRow = this._sourceRows().find((pRow) => String(pRow.Value) === String(pVal));
 			if (tmpRow)
 			{
@@ -800,7 +828,7 @@ class PictViewPicker extends libPictView
 
 		// Membership set used to flag options as selected (multi: every value; single: the one value).
 		const tmpSelectedKeys = new Set((tmpMulti ? this.getValue() : [ this.getValue() ])
-			.filter((pVal) => pVal !== undefined && pVal !== null && pVal !== '')
+			.filter((pVal) => !this._isEmptyValue(pVal))
 			.map((pVal) => String(pVal)));
 
 		const tmpTagLast = !!this.options.TagLast;
@@ -851,7 +879,7 @@ class PictViewPicker extends libPictView
 		// selected ("Any" is the active state) — and the control's inline × while a value is selected.
 		const tmpAllowClear = (!tmpMulti && this.options.AllowClear === true);
 		const tmpClearableValue = tmpMulti ? undefined : this.getValue();
-		const tmpClearableHasValue = (tmpClearableValue !== undefined && tmpClearableValue !== null && tmpClearableValue !== '');
+		const tmpClearableHasValue = !this._isEmptyValue(tmpClearableValue);
 		tmpState.ClearOptionSlot = tmpAllowClear
 			? [ { PickerHash: this.options.PickerHash, Label: this.options.ClearLabel || 'Any', Selected: !tmpClearableHasValue, NotSelected: tmpClearableHasValue } ]
 			: [];
@@ -891,7 +919,9 @@ class PictViewPicker extends libPictView
 		// IS the Record for its sub-template, so it must carry everything that template references.
 		if (tmpMulti)
 		{
-			const tmpValues = this.getValue();
+			// A sentinel inside the array is dropped from the chip list, so a Number-typed multi picker
+			// marshalling in as a lone 0 shows the placeholder rather than a "0" chip.
+			const tmpValues = this.getValue().filter((pVal) => !this._isEmptyValue(pVal));
 			const tmpNoValue = (tmpValues.length === 0);
 			const tmpChips = tmpValues.map((pVal) =>
 			{
@@ -910,9 +940,11 @@ class PictViewPicker extends libPictView
 		else
 		{
 			const tmpValue = this.getValue();
-			const tmpHasValue = (tmpValue !== undefined && tmpValue !== null && tmpValue !== '');
-			const tmpSelected = this._lookupRecord(tmpValue);
-			const tmpDisplayText = tmpSelected ? tmpSelected.Text : (this._selectedText || (tmpHasValue ? String(tmpValue) : this.options.Placeholder));
+			const tmpHasValue = !this._isEmptyValue(tmpValue);
+			const tmpSelected = tmpHasValue ? this._lookupRecord(tmpValue) : null;
+			// No value → the placeholder, never a stale _selectedText left over from a prior selection.
+			const tmpDisplayText = !tmpHasValue ? this.options.Placeholder
+				: (tmpSelected ? tmpSelected.Text : (this._selectedText || String(tmpValue)));
 			tmpState.SingleSlot = [ Object.assign({
 				PickerHash: this.options.PickerHash,
 				DisplayText: tmpDisplayText,
@@ -1454,7 +1486,7 @@ class PictViewPicker extends libPictView
 	{
 		if (this._isMulti()) { return; }
 		const tmpValue = this.getValue();
-		const tmpHadValue = (tmpValue !== undefined && tmpValue !== null && tmpValue !== '');
+		const tmpHadValue = !this._isEmptyValue(tmpValue);
 		this._selectedText = null;
 		this._setValue(null);
 		this._search = '';

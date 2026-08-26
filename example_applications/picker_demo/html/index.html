@@ -200,6 +200,53 @@
 				</p>
 			</div>
 
+			<!-- Numeric unset value: where does the "0" come from, and whose bug is it? -->
+			<div class="demo-field" style="margin-top: 1.75rem;">
+				<label>Numeric unset value <span class="demo-tag">DataType Number &middot; regression</span></label>
+				<div id="UnsetRawPicker"></div>
+				<div id="UnsetFixedPicker" style="margin-top: 0.75rem;"></div>
+				<div id="UnsetRealZeroPicker" style="margin-top: 0.75rem;"></div>
+				<div class="demo-btns">
+					<button type="button" class="demo-btn" onclick="_Pict.PictApplication.setUnsetValue(0)">Set all to 0 (pristine)</button>
+					<button type="button" class="demo-btn" onclick="_Pict.PictApplication.setUnsetValue(3)">Set all to 3 (a real id)</button>
+					<button type="button" class="demo-btn" onclick="_Pict.PictApplication.setUnsetValue('')">Set all to '' (cleared)</button>
+				</div>
+				<div id="UnsetValue" class="demo-value"></div>
+				<p class="demo-note">
+					A form field declared <code>DataType: 'Number'</code> with <code>InputType: 'Picker'</code> — an
+					entity foreign key, virtually always — showed a literal <code>0</code> on a brand-new form, as
+					though something had been selected. Two libraries were candidates, so this section separates them.
+				</p>
+				<p class="demo-note">
+					<strong>Where the 0 comes from.</strong> A <code>pict-section-form</code> marshal reads values
+					through manyfest's <code>getValueByHash</code>, which substitutes the descriptor default for any
+					address the model does not hold yet. With no explicit <code>Default</code> that is manyfest's
+					per-<code>DataType</code> default — and those differ: <code>String</code> gets <code>''</code>,
+					but <code>Number</code>, <code>Integer</code> and <code>Float</code> get <code>0</code>. So the
+					value reaching the widget on a pristine form is <code>0</code>, not empty. Computed live from
+					manyfest alone, with no form in the picture:
+				</p>
+				<div id="UnsetProvenance" class="demo-value"></div>
+				<p class="demo-note">
+					<strong>Whose bug the display is.</strong> This demo app contains no
+					<code>pict-section-form</code> and no dynamic form at all — the value is handed to the control
+					with a plain <code>setValue(0)</code>. The <em>first</em> picker above still paints
+					<code>0</code>. That settles it: the marshal was doing its job, and the display bug was the
+					picker's — <code>0</code> was simply a value it had no way to know meant "nothing selected".
+				</p>
+				<p class="demo-note">
+					<strong>The fix.</strong> <code>EmptyValues</code> — a display-only list of values a host
+					declares as "nothing selected", which the <code>pict-section-form</code> adapter seeds with
+					<code>[0]</code> for a Number/Integer/Float descriptor. The second picker is the first one with
+					it set. Use the buttons and watch the readout: both pickers <em>store</em> the same value at
+					every step, and only the painted text differs — so a host's <code>0</code>-means-unset stays a
+					valid data pattern for solvers, exports and the API. The third picker shows the escape hatch: its
+					option list contains a real option valued <code>0</code>, so that is a genuine selection and
+					shows its label even with <code>EmptyValues: [0]</code> set. Set a field's own
+					<code>PictForm.EmptyValues</code> to override, or to <code>[]</code> to opt out entirely.
+				</p>
+			</div>
+
 			<div class="demo-filler"></div>
 		</div>
 		<!-- Load the application bundle -->
