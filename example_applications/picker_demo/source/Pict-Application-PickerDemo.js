@@ -398,7 +398,118 @@ class PickerDemoApplication extends libPictApplication
 		this.pict.views['SpecialCharsMultiPicker'].render();
 		fSpecialReadout('#SpecialCharsMultiValue', this.pict.AppData.Demo.SpecialCharsMulti);
 
+		// --- Numeric UNSET value (regression): a picker bound to a NUMBER-typed field paints "0" as if it
+		//     were a selection. This section exists to settle WHERE that bug lives, because the value's
+		//     provenance points at a different library than the symptom does.
+		//
+		//     Provenance: a pict-section-form marshal reads through manyfest's getValueByHash, which
+		//     substitutes the descriptor default for any address the model does not hold yet — and with no
+		//     explicit `Default` that is manyfest's per-DataType default: '' for String, but 0 for
+		//     Number/Integer/Float. So a pristine `{ DataType: 'Number', InputType: 'Picker' }` field (an
+		//     entity FK, virtually always) reaches the widget as 0. The readout below computes exactly
+		//     that, from manyfest alone, so you can see the 0 is not invented by the form layer.
+		//
+		//     Symptom: THIS demo app has no pict-section-form and no dynamic form in it at all — just
+		//     `setValue(0)` straight into the picker. The first control below still paints "0". That is the
+		//     proof the display bug is the PICKER's, not the form's: 0 was simply a value the widget had no
+		//     way to know meant "nothing selected". Hence `EmptyValues` — a display-only sentinel list. The
+		//     second control is the identical picker with it set; the third shows the escape hatch.
+		const _Vendors =
+		[
+			{ Value: 1, Text: 'Ace Paving' },
+			{ Value: 2, Text: 'Bedrock Materials' },
+			{ Value: 3, Text: 'Cornerstone Construction' },
+			{ Value: 4, Text: 'Delta Aggregates' },
+		];
+
+		// Where the 0 actually comes from — manyfest, from a Number descriptor carrying NO Default at all.
+		const tmpManyfest = this.pict.manifest.constructor;
+		const tmpUnsetManifest = new tmpManyfest(
+			{
+				Scope: 'UnsetDemo',
+				Descriptors:
+				{
+					'Header.Contractor': { Hash: 'Contractor', DataAddress: 'Header.Contractor', DataType: 'Number' },
+					'Header.Reference': { Hash: 'Reference', DataAddress: 'Header.Reference', DataType: 'String' },
+				},
+			});
+		const tmpPristineFormData = {};   // a brand-new form: neither address is set
+		this.pict.ContentAssignment.assignContent('#UnsetProvenance',
+			`manyfest <code>getValueByHash({}, …)</code> on a pristine form —`
+			+ ` <code>DataType: 'Number'</code> → <code>${JSON.stringify(tmpUnsetManifest.getValueByHash(tmpPristineFormData, 'Contractor'))}</code>`
+			+ ` · <code>DataType: 'String'</code> → <code>${JSON.stringify(tmpUnsetManifest.getValueByHash(tmpPristineFormData, 'Reference'))}</code>`);
+
+		// 1. The bug, live: no EmptyValues, so 0 is just a value the picker cannot resolve → it paints "0".
+		this.pict.AppData.Demo.UnsetRaw = 0;
+		tmpPicker.createPicker('UnsetRawPicker',
+			{
+				DestinationAddress: '#UnsetRawPicker',
+				ValueAddress: 'AppData.Demo.UnsetRaw',
+				Placeholder: 'Select a contractor…',
+				Options: _Vendors,
+				OnChange: () => this._showUnset(),
+			});
+		this.pict.views['UnsetRawPicker'].render();
+
+		// 2. The fix: the same picker told that 0 means unset. Display only — getValue() still returns 0.
+		this.pict.AppData.Demo.UnsetFixed = 0;
+		tmpPicker.createPicker('UnsetFixedPicker',
+			{
+				DestinationAddress: '#UnsetFixedPicker',
+				ValueAddress: 'AppData.Demo.UnsetFixed',
+				Placeholder: 'Select a contractor…',
+				Options: _Vendors,
+				EmptyValues: [ 0 ],
+				OnChange: () => this._showUnset(),
+			});
+		this.pict.views['UnsetFixedPicker'].render();
+
+		// 3. Reality beats the sentinel: 0 IS a real option here, so it selects normally despite EmptyValues.
+		this.pict.AppData.Demo.UnsetRealZero = 0;
+		tmpPicker.createPicker('UnsetRealZeroPicker',
+			{
+				DestinationAddress: '#UnsetRealZeroPicker',
+				ValueAddress: 'AppData.Demo.UnsetRealZero',
+				Placeholder: 'Select a tier…',
+				Options: [ { Value: 0, Text: 'None (a real option valued 0)' } ].concat(_Vendors),
+				EmptyValues: [ 0 ],
+				OnChange: () => this._showUnset(),
+			});
+		this.pict.views['UnsetRealZeroPicker'].render();
+		this._showUnset();
+
 		return super.onAfterInitializeAsync(fCallback);
+	}
+
+	/** Drive all three unset-demo pickers at once, so the pair can be compared on the same value. */
+	setUnsetValue(pValue)
+	{
+		[ 'UnsetRawPicker', 'UnsetFixedPicker', 'UnsetRealZeroPicker' ].forEach((pHash) => this.pict.views[pHash].setValue(pValue));
+		this._showUnset();
+	}
+
+	/** Paint what each unset-demo picker STORES next to what it SHOWS — the whole point being that the
+	 *  stored value is identical and only the painted text differs. */
+	_showUnset()
+	{
+		const fShown = (pHash) =>
+		{
+			const tmpView = this.pict.views[pHash];
+			const tmpSlot = tmpView._buildState().SingleSlot[0];
+			return { Value: tmpView.getValue(), Text: tmpSlot.DisplayText, Placeholder: tmpSlot.NoValue };
+		};
+		const fRow = (pLabel, pHash) =>
+		{
+			const tmpState = fShown(pHash);
+			return `${pLabel} — stored <code>${JSON.stringify(tmpState.Value)}</code>`
+				+ ` · painted <code>${tmpState.Text}</code>${tmpState.Placeholder ? ' <em>(placeholder)</em>' : ''}`;
+		};
+		this.pict.ContentAssignment.assignContent('#UnsetValue',
+			[
+				fRow('no EmptyValues', 'UnsetRawPicker'),
+				fRow('EmptyValues: [0]', 'UnsetFixedPicker'),
+				fRow('0 is a real option', 'UnsetRealZeroPicker'),
+			].join('<br>'));
 	}
 
 	/**
