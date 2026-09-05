@@ -34,7 +34,12 @@ const _PickerCSS = /*css*/`
 /* Multi-select chips. The control hosts a wrapping row of removable tags + a muted placeholder. */
 .pps-multi .pps-control { align-items: flex-start; }
 .pps-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; min-width: 0; }
-.pps-chips-ph { color: var(--theme-color-text-muted, #6b7686); }
+.pps-chips-ph { color: var(--theme-color-text-muted, #6b7686);
+	/* The placeholder is the ONLY chips-row child that is free text, so it is the one thing that can
+	   force the control taller than a line. Single-select truncates (.pps-value above); multi did not,
+	   so a long label wrapped and knocked neighbouring filters out of vertical alignment. Truncate to
+	   match: min-width:0 lets it shrink inside the flex row, and it never wraps. */
+	min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pps-chip { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 100%; font-size: 0.82rem; line-height: 1.4;
 	padding: 0.1rem 0.2rem 0.1rem 0.5rem; border-radius: 6px;
 	background: color-mix(in srgb, var(--theme-color-brand-primary, #156dd1) 12%, transparent);
