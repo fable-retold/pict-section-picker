@@ -140,7 +140,7 @@ const _DEFAULT_CONFIGURATION =
 			{~TS:Pict-Section-Picker-ClearX:Record.ClearSlot~}
 			<span class="pps-chevron">{~I:ChevronDown~}</span>
 		</div>
-		<div class="pps-backdrop" onclick="_Pict.views['{~D:Record.PickerHash~}'].close()"></div>
+		<div class="pps-backdrop" onclick="_Pict.views['{~D:Record.PickerHash~}'].closeFromBackdrop(event)"></div>
 		<div class="pps-pop" id="PPS_Pop_{~D:Record.PickerHash~}">
 			<div class="pps-panel">
 				{~TS:Pict-Section-Picker-Search:Record.SearchSlot~}
@@ -1301,6 +1301,40 @@ class PictViewPicker extends libPictView
 	{
 		this._markClosed();
 		this._paintOpen();
+	}
+
+	/**
+	 * Close from the transparent backdrop, and pass the click through to whatever
+	 * the user actually aimed at.
+	 *
+	 * The backdrop is a full-viewport layer, so while a picker is open EVERY click
+	 * elsewhere on the page lands on it and is consumed closing the dropdown. The
+	 * button underneath never sees it, and the interaction reads as "the first
+	 * click did nothing" — measured on a filter bar, the Apply handler recorded
+	 * zero calls on the first click and one on the second. A dropdown dismissing
+	 * itself should not also cost the click that dismissed it.
+	 *
+	 * The backdrop is display:none the moment the widget is painted closed, so
+	 * elementFromPoint then returns the real target rather than the backdrop.
+	 *
+	 * @param {MouseEvent} pEvent - The backdrop click.
+	 */
+	closeFromBackdrop(pEvent)
+	{
+		this.close();
+		if (!pEvent || (typeof document === 'undefined') || (typeof document.elementFromPoint !== 'function'))
+		{
+			return;
+		}
+		const tmpTarget = document.elementFromPoint(pEvent.clientX, pEvent.clientY);
+		// Nothing meaningful under the cursor (or the backdrop somehow survived) —
+		// closing was the whole intent.
+		if (!tmpTarget || tmpTarget === document.body || tmpTarget === document.documentElement
+			|| (tmpTarget.classList && tmpTarget.classList.contains('pps-backdrop')))
+		{
+			return;
+		}
+		if (typeof tmpTarget.click === 'function') { tmpTarget.click(); }
 	}
 
 	/** Opt-in teardown for a host that drops the view (pict-view has no destroy hook). _markClosed already
