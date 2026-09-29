@@ -1025,6 +1025,12 @@ class PictViewPicker extends libPictView
 	 */
 	onBeforeRender(pRenderable)
 	{
+		// A closed picker's full render paints an empty search box, and the view outlives a mount (the same
+		// PickerHash hands this instance back), so a term kept from before would filter unseen.
+		if (!this._open)
+		{
+			this._search = '';
+		}
 		this._buildState();
 		return super.onBeforeRender(pRenderable);
 	}

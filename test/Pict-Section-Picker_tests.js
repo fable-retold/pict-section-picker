@@ -848,5 +848,68 @@ suite
 				);
 			}
 		);
+
+		suite
+		(
+			'View search term across full renders',
+			() =>
+			{
+				const newCreatablePicker = (pProvider, pHash) => pProvider.createPicker(pHash,
+					{
+						Options: COUNTRY_OPTIONS.slice(),
+						OnCreate: (pTerm) => ({ Value: pTerm, Text: pTerm }),
+					});
+
+				test
+				(
+					'a closed picker drops its search term on a full render: the list is whole and nothing offers to be created',
+					(fDone) =>
+					{
+						const tmpView = newCreatablePicker(newProvider(), 'Search-ClosedRender');
+						tmpView._open = true;
+						tmpView.search('zz');
+						Expect(tmpView._state().CreateSlot).to.have.length(1, 'an unmatched term offers a create row while open');
+						tmpView.close();
+						tmpView.render();
+						Expect(tmpView._search).to.equal('');
+						Expect(tmpView._state().Options.map((pOption) => pOption.ValueKey)).to.deep.equal([ 'us', 'ca', 'mx' ]);
+						Expect(tmpView._state().CreateSlot).to.deep.equal([]);
+						return fDone();
+					}
+				);
+				test
+				(
+					'an open picker keeps its search term through a full render',
+					(fDone) =>
+					{
+						const tmpView = newCreatablePicker(newProvider(), 'Search-OpenRender');
+						tmpView._open = true;
+						tmpView.search('can');
+						tmpView.render();
+						Expect(tmpView._search).to.equal('can');
+						Expect(tmpView._state().Options.map((pOption) => pOption.ValueKey)).to.deep.equal([ 'ca' ]);
+						return fDone();
+					}
+				);
+				test
+				(
+					'a picker handed back for the same hash renders without the term it was closed with',
+					(fDone) =>
+					{
+						const tmpProvider = newProvider();
+						const tmpFirst = newCreatablePicker(tmpProvider, 'Search-Reused');
+						tmpFirst._open = true;
+						tmpFirst.search('mex');
+						tmpFirst.close();
+						const tmpAgain = newCreatablePicker(tmpProvider, 'Search-Reused');
+						Expect(tmpAgain).to.equal(tmpFirst, 'createPicker reuses the view for a known hash');
+						tmpAgain.render();
+						Expect(tmpAgain._state().Options).to.have.length(COUNTRY_OPTIONS.length);
+						Expect(tmpAgain._state().CreateSlot).to.deep.equal([]);
+						return fDone();
+					}
+				);
+			}
+		);
 	}
 );
