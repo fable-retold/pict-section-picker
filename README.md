@@ -49,6 +49,8 @@ The control renders into `#CountryPicker`; `AppData.Form.Country` holds the sele
 
 **Clearable:** set `AllowClear: true` to give a single-select a way back to empty — a pinned **"Any"** row at the top of the dropdown (checked while nothing is selected) and an inline **×** on the control while a value is selected. Either empties the selection and fires `OnChange(null, null)`; clearing while already empty just closes. `ClearLabel` renames the row (default `"Any"`). The natural fit is filters, where empty means "no constraint" — the recordset quick filters enable it automatically. Multi mode ignores the option (chips already clear individually).
 
+**Empty list:** `EmptyLabel` sets the text shown when the list has no options for the current search (default `"No matches"`). It can be a string, or a function `(searchTerm) => string` asked again on every empty render, so a host can say why the list is empty, for example that its own scope narrowed it. The label is rendered as text; a blank result or a throw falls back to the default.
+
 ### Multi
 
 `Mode: 'multi'` — `ValueAddress` holds an **array** of values, rendered as chips with × buttons. Selecting toggles membership and keeps the dropdown open for rapid multi-pick. Two optional mirror bindings (the `EntitySelectorMultiple` contract):
