@@ -157,6 +157,10 @@ class PictInputTypePicker extends libPictInputExtension
 			ReadOnly: !!tmpPF.ReadOnly,
 			Entity: tmpPF.Entity,
 			SearchFields: tmpPF.SearchFields,
+			// A bare-number search also finds the record with that ID (on unless PictForm.SearchByID is false).
+			SearchByID: tmpPF.SearchByID,
+			SearchIDField: tmpPF.SearchIDField,
+			IDMatchLabel: tmpPF.IDMatchLabel,
 			ValueField: tmpPF.ValueField,
 			TextField: tmpPF.TextField,
 			// Optional composed-display template (overrides TextField); see the picker's TextTemplate option.
