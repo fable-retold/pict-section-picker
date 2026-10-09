@@ -92,6 +92,10 @@ const _DEFAULT_CONFIGURATION =
 	// clears via its chips, so the option is ignored there.
 	AllowClear: false,
 	ClearLabel: 'Any',
+	// The text shown when the list has no options for the current search. A string, or a function
+	// (searchTerm) => string asked again on every empty render, so a host can say why the list is empty
+	// (e.g. its own scope narrowed it). Rendered as text; an empty result or a throw falls back to the default.
+	EmptyLabel: 'No matches',
 
 	// When true, render the resolved selection as plain, non-interactive text (no dropdown / chevron /
 	// clear) — for read-only form views. The host sets PictForm.ReadOnly; the form-input passes it through.
@@ -219,10 +223,14 @@ const _DEFAULT_CONFIGURATION =
 	{~TS:Pict-Section-Picker-ClearOption:Record.ClearOptionSlot~}
 	{~TS:Pict-Section-Picker-Create:Record.CreateSlot~}
 	{~TS:Pict-Section-Picker-Group:Record.Groups~}
-	{~NE:Record.IsEmpty^<div class="pps-empty">No matches</div>~}
+	{~TS:Pict-Section-Picker-Empty:Record.EmptySlot~}
 	{~NE:Record.Loading^<div class="pps-loading">Loading…</div>~}
 	{~TS:Pict-Section-Picker-More:Record.MoreSlot~}
 `
+		},
+		{
+			Hash: 'Pict-Section-Picker-Empty',
+			Template: /*html*/`<div class="pps-empty">{~D:Record.Label~}</div>`
 		},
 		{
 			// The pinned "Any" row (AllowClear, single mode) — selecting it empties the selection.
@@ -812,6 +820,31 @@ class PictViewPicker extends libPictView
 	}
 
 	/**
+	 * The empty-list text for the current search: the EmptyLabel string, or what an EmptyLabel function
+	 * returns for the search term. A blank result or a throw falls back to the default.
+	 *
+	 * @return {string} The label, unescaped.
+	 */
+	_resolveEmptyLabel()
+	{
+		const tmpDefault = 'No matches';
+		let tmpLabel = this.options.EmptyLabel;
+		if (typeof tmpLabel === 'function')
+		{
+			try
+			{
+				tmpLabel = tmpLabel(this._search || '');
+			}
+			catch (pError)
+			{
+				this.pict.log.warn(`Pict-Section-Picker [${this.options.PickerHash}] EmptyLabel() threw; showing the default.`, pError);
+				tmpLabel = '';
+			}
+		}
+		return (typeof tmpLabel === 'string' && tmpLabel.length > 0) ? tmpLabel : tmpDefault;
+	}
+
+	/**
 	 * (Re)compute the picker's render state into AppData: the displayed value / chips + the
 	 * (search-filtered) option list with selected/highlight flags.
 	 */
@@ -907,6 +940,7 @@ class PictViewPicker extends libPictView
 			: [];
 		tmpState.Loading = !!this._loading;
 		tmpState.IsEmpty = (tmpState.Options.length === 0 && !this._loading && !tmpCanCreate);
+		tmpState.EmptySlot = tmpState.IsEmpty ? [ { Label: escapeHTML(this._resolveEmptyLabel()) } ] : [];
 		tmpState.HasMore = !!(tmpAsync && this._hasMore && !this._loading);
 		tmpState.MoreSlot = tmpState.HasMore ? [ { PickerHash: this.options.PickerHash } ] : [];
 
