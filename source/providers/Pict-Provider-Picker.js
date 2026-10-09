@@ -63,6 +63,8 @@ const _PickerCSS = /*css*/`
 .pps-valuebox { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
 .pps-valuebox .pps-value { min-width: 0; }
 .pps-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A row found by its ID (SearchByID): a muted "<Entity> #<ID>" after the label, in the open list only. */
+.pps-option-idmatch { flex: 0 0 auto; margin-left: 0.5rem; font-size: 0.78rem; white-space: nowrap; color: var(--theme-color-text-muted, #6b7686); }
 
 /* Transparent full-viewport backdrop: closes on outside click (no document listener). Only present
    while OPEN — otherwise a fixed full-viewport layer would swallow every click on the page. When open,
@@ -314,6 +316,52 @@ class PictProviderPicker extends libPictProvider
 		const tmpEntityTagField = pConfig.EntityTag || false;
 		const tmpEntityTagFields = Array.isArray(pConfig.EntityTags) ? pConfig.EntityTags : false;
 		const tmpTextTemplate = pConfig.TextTemplate || false;
+		// Search by ID (on unless SearchByID is false): a search that is only a number also finds the record
+		// with that ID, pinned to the top of the first page; `#<number>` finds the ID only.
+		const tmpSearchByID = (pConfig.SearchByID !== false);
+		const tmpIDField = pConfig.SearchIDField || `ID${tmpEntity}`;
+		const fParseIDSearch = (pSearchTerm) =>
+		{
+			if (!tmpSearchByID)
+			{
+				return null;
+			}
+			const tmpMatch = /^(#?)(\d+)$/.exec(String(pSearchTerm == null ? '' : pSearchTerm).trim());
+			if (!tmpMatch)
+			{
+				return null;
+			}
+			return { ID: tmpMatch[2], Only: (tmpMatch[1] === '#') };
+		};
+		// The muted marker on a row found by its ID: `<Entity> #<ID>`. IDMatchLabel is a word to use in place
+		// of the entity name, or `(record, id) => text`.
+		const fIDMatchLabel = (pRecord, pID) =>
+		{
+			const tmpLabelConfig = pConfig.IDMatchLabel;
+			if (typeof tmpLabelConfig === 'function')
+			{
+				try
+				{
+					return tmpLabelConfig(pRecord, pID);
+				}
+				catch (pError)
+				{
+					this.pict.log.warn(`Pict-Section-Picker [${tmpEntity}] IDMatchLabel() threw; using the default.`, pError);
+				}
+			}
+			return `${(typeof tmpLabelConfig === 'string' && tmpLabelConfig) ? tmpLabelConfig : tmpEntity} #${pID}`;
+		};
+		const fToOption = (pRecord, pMarkIDMatch) =>
+		{
+			const tmpOption = tmpMapRecord
+				? tmpMapRecord(pRecord)
+				: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields);
+			if (pMarkIDMatch && tmpOption)
+			{
+				tmpOption.IDMatch = fIDMatchLabel(pRecord, pRecord[tmpIDField]);
+			}
+			return tmpOption;
+		};
 
 		// Back-off state: after a page-0 search comes back empty and is retried without the back-off set,
 		// later pages of the SAME term stay widened (a new page-0 resets it). Held on the provider by hash
@@ -342,12 +390,13 @@ class PictProviderPicker extends libPictProvider
 			return tmpPriorityIDsPromise;
 		};
 		// Fetch + compose the pinned rows themselves — one INN read under the mandatory scope (so an
-		// out-of-scope or already-culled pin never appears), ordered by the resolver's id order.
-		const fFetchPriorityOptions = (pPriorityIDs, pScopeFilter) => new Promise((resolve) =>
+		// out-of-scope or already-culled pin never appears), ordered by the resolver's id order. `pPinField`
+		// is the column the ids are in: the ValueField for PriorityValues, the ID field for a search by ID.
+		const fFetchPriorityOptions = (pPriorityIDs, pScopeFilter, pPinField, pMarkIDMatch) => new Promise((resolve) =>
 		{
 			const tmpStanzas = [];
 			if (pScopeFilter) { tmpStanzas.push(pScopeFilter); }
-			tmpStanzas.push(`FBL~${tmpValueField}~INN~${pPriorityIDs.map((pID) => encodeURIComponent(pID)).join(',')}`);
+			tmpStanzas.push(`FBL~${pPinField}~INN~${pPriorityIDs.map((pID) => encodeURIComponent(pID)).join(',')}`);
 			if (tmpSort) { tmpStanzas.push(`FSF~${tmpSort}~ASC~0`); }
 			this.pict.EntityProvider.getEntitySetPage(tmpEntity, tmpStanzas.filter(Boolean).join('~'), 0, pPriorityIDs.length,
 				(pError, pRecords) =>
@@ -356,21 +405,20 @@ class PictProviderPicker extends libPictProvider
 					this._decorateRecordsWithJoin(Array.isArray(pRecords) ? pRecords : [], tmpJoinConfig).then((pDecorated) =>
 					{
 						const tmpByID = {};
-						for (let i = 0; i < pDecorated.length; i++) { tmpByID[String(pDecorated[i][tmpValueField])] = pDecorated[i]; }
+						for (let i = 0; i < pDecorated.length; i++) { tmpByID[String(pDecorated[i][pPinField])] = pDecorated[i]; }
 						const tmpOptions = pPriorityIDs
 							.map((pID) => tmpByID[String(pID)])
 							.filter((pRecord) => !!pRecord)
-							.map((pRecord) => tmpMapRecord
-								? tmpMapRecord(pRecord)
-								: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
+							.map((pRecord) => fToOption(pRecord, pMarkIDMatch));
 						return resolve(tmpOptions);
 					});
 				});
 		});
 
 		// One page of the natural (non-pinned) query. `pPriorityIDs` is empty except on an unfiltered browse
-		// with a pin configured — where those ids are excluded here (NIN) and prepended in fFinish.
-		const fRunQuery = (pSearchTerm, pPage, pPriorityIDs) => new Promise((resolve, reject) =>
+		// with a pin configured, or a search by ID — where those ids (in `pPinField`) are excluded here (NIN)
+		// and prepended in fFinish.
+		const fRunQuery = (pSearchTerm, pPage, pPriorityIDs, pPinField) => new Promise((resolve, reject) =>
 		{
 			if (!this.pict.EntityProvider || typeof this.pict.EntityProvider.getEntitySetPage !== 'function')
 			{
@@ -388,6 +436,7 @@ class PictProviderPicker extends libPictProvider
 				catch (pScopeError) { this.pict.log.warn(`Pict-Section-Picker [${tmpEntity}] BaseFilter() threw; ignoring contextual scope.`, pScopeError); tmpBaseFilter = ''; }
 			}
 			const tmpScope = this._normalizeBaseFilter(tmpBaseFilter);
+			const tmpIDSearch = fParseIDSearch(pSearchTerm);
 
 			const tmpPageIndex = (pPage || 0);
 			if (tmpPageIndex === 0) { tmpBackOff.Dropped = false; tmpBackOff.Term = null; }
@@ -399,10 +448,17 @@ class PictProviderPicker extends libPictProvider
 				const tmpStanzas = [];
 				if (tmpScope.Filter) { tmpStanzas.push(tmpScope.Filter); }
 				if (pIncludeBackOff && tmpScope.BackOffFilter) { tmpStanzas.push(tmpScope.BackOffFilter); }
-				if (pSearchTerm) { tmpStanzas.push(this.buildSearchFilter(tmpSearchFields, pSearchTerm)); }
+				if (tmpIDSearch && tmpIDSearch.Only)
+				{
+					tmpStanzas.push(`FBV~${tmpIDField}~EQ~${tmpIDSearch.ID}`);
+				}
+				else if (pSearchTerm)
+				{
+					tmpStanzas.push(this.buildSearchFilter(tmpSearchFields, pSearchTerm));
+				}
 				// Pin-to-top: keep the pinned rows OUT of the natural flow so they appear only at the top
 				// (prepended in fFinish), never doubled on a later page.
-				if (pPriorityIDs.length > 0) { tmpStanzas.push(`FBL~${tmpValueField}~NIN~${pPriorityIDs.map((pID) => encodeURIComponent(pID)).join(',')}`); }
+				if (pPriorityIDs.length > 0) { tmpStanzas.push(`FBL~${pPinField}~NIN~${pPriorityIDs.map((pID) => encodeURIComponent(pID)).join(',')}`); }
 				if (tmpSort) { tmpStanzas.push(`FSF~${tmpSort}~ASC~0`); }
 				return tmpStanzas.filter(Boolean).join('~');
 			};
@@ -414,9 +470,8 @@ class PictProviderPicker extends libPictProvider
 				// searched row, before mapping — so the option Text can show the compound display.
 				this._decorateRecordsWithJoin(tmpList, tmpJoinConfig).then((pDecorated) =>
 				{
-					const tmpResults = pDecorated.map((pRecord) => tmpMapRecord
-						? tmpMapRecord(pRecord)
-						: this._composeOption(pRecord, tmpValueField, tmpTextField, tmpJoinConfig, tmpEntityTagField, tmpTextTemplate, tmpEntityTagFields));
+					// A `#<number>` search returns only ID matches, so every row carries the marker.
+					const tmpResults = pDecorated.map((pRecord) => fToOption(pRecord, !!(tmpIDSearch && tmpIDSearch.Only)));
 					// hasMore: a full page came back, so there is (probably) another. Avoids a Count round-trip.
 					// Pin-to-top: on the first browse page, prepend the pinned options ahead of the natural
 					// results (which excluded them via NIN above).
@@ -424,7 +479,7 @@ class PictProviderPicker extends libPictProvider
 					{
 						return resolve({ results: tmpResults, hasMore: (tmpList.length >= tmpPageSize) });
 					}
-					return fFetchPriorityOptions(pPriorityIDs, tmpScope.Filter).then((pPinned) =>
+					return fFetchPriorityOptions(pPriorityIDs, tmpScope.Filter, pPinField, !!(tmpIDSearch && !tmpIDSearch.Only)).then((pPinned) =>
 						resolve({ results: pPinned.concat(tmpResults), hasMore: (tmpList.length >= tmpPageSize) }));
 				});
 			};
@@ -453,16 +508,21 @@ class PictProviderPicker extends libPictProvider
 				});
 		});
 
-		// No pin configured → the plain per-page provider. Otherwise resolve the pinned ids first (browse
-		// only — a search term defers entirely to natural relevance) and run the query with them.
-		if (!tmpPriorityConfig)
-		{
-			return (pSearchTerm, pPage) => fRunQuery(pSearchTerm, pPage, []);
-		}
+		// A bare-number search pins the record with that ID. Otherwise, with no pin configured, the plain
+		// per-page provider; with one, resolve the pinned ids first (browse only — a search term defers
+		// entirely to natural relevance) and run the query with them.
 		return (pSearchTerm, pPage) =>
 		{
-			if (pSearchTerm) { return fRunQuery(pSearchTerm, pPage, []); }
-			return fResolvePriorityIDs().then((pIDs) => fRunQuery(pSearchTerm, pPage, pIDs));
+			const tmpIDSearch = fParseIDSearch(pSearchTerm);
+			if (tmpIDSearch && !tmpIDSearch.Only)
+			{
+				return fRunQuery(pSearchTerm, pPage, [ tmpIDSearch.ID ], tmpIDField);
+			}
+			if (pSearchTerm || !tmpPriorityConfig)
+			{
+				return fRunQuery(pSearchTerm, pPage, [], tmpValueField);
+			}
+			return fResolvePriorityIDs().then((pIDs) => fRunQuery(pSearchTerm, pPage, pIDs, tmpValueField));
 		};
 	}
 

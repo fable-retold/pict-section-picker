@@ -279,9 +279,13 @@ const _DEFAULT_CONFIGURATION =
 			Template: /*html*/`
 	<button type="button" class="pps-option{~NE:Record.Selected^ pps-selected~}{~NE:Record.Highlight^ pps-highlight~}" data-pps-valuekey="{~D:Record.ValueKeyAttr~}" onclick="_Pict.views['{~D:Record.PickerHash~}'].selectFromElement(this)">
 		<span class="pps-option-check{~NE:Record.NotSelected^ pps-hidden~}">{~I:Check~}</span>
-		{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-option-label" title="{~D:Record.TextAttr~}">{~D:Record.TextAttr~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}
+		{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-option-label" title="{~D:Record.TextAttr~}">{~D:Record.TextAttr~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}{~TS:Pict-Section-Picker-IDMatch:Record.IDMatchSlot~}
 	</button>
 `
+		},
+		{
+			Hash: 'Pict-Section-Picker-IDMatch',
+			Template: /*html*/`<span class="pps-option-idmatch">{~D:Record.Label~}</span>`
 		},
 		{
 			// EntityTag badge — a small code/number pill rendered before or after the label via the
@@ -880,6 +884,7 @@ class PictViewPicker extends libPictView
 				Selected: tmpIsSelected,
 				NotSelected: !tmpIsSelected,
 				Highlight: (pIndex === this._highlight),
+				IDMatchSlot: pOption.IDMatch ? [ { Label: escapeHTML(String(pOption.IDMatch)) } ] : [],
 			}, this._tagSlots(this._combinedTags(pOption), tmpTagLast));
 		});
 

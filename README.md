@@ -112,6 +112,9 @@ Entity-source configuration:
 |---|---|---|
 | `Entity` | — (required) | The Meadow entity name. |
 | `SearchFields` | `['Name']` | Fields OR'd together in the `LIKE` search. |
+| `SearchByID` | `true` | A search that is only a number (`42`) also finds the record with that ID, pinned to the top of the first page, alongside the usual text matches; `#42` finds the ID only. `false` turns both off. |
+| `SearchIDField` | `ID<Entity>` | The ID column `SearchByID` matches, when it isn't `ID<Entity>`. Independent of `ValueField`. |
+| `IDMatchLabel` | the entity name | The muted marker after a row found by its ID, in the open list only (`Author #128`). A string replaces the entity name (`Writer` → `Writer #128`); a function `(record, id) => text` writes the whole marker. |
 | `ValueField` | `ID<Entity>` | Record field used as the option `Value`. |
 | `TextField` | `'Name'` | Record field used as the option `Text`. |
 | `PageSize` | `20` | Records per page. |
