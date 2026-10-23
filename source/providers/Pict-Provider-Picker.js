@@ -62,7 +62,10 @@ const _PickerCSS = /*css*/`
 	background: var(--theme-color-background-tertiary, #eceef2); color: var(--theme-color-text-secondary, #45596b); }
 .pps-valuebox { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
 .pps-valuebox .pps-value { min-width: 0; }
-.pps-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A long label wraps up to OptionLabelLines lines (--pps-option-lines, set on the list) and then ends in an
+   ellipsis; the full text stays in the row's title tooltip. */
+.pps-option-label { min-width: 0; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical;
+	-webkit-line-clamp: var(--pps-option-lines, 3); line-clamp: var(--pps-option-lines, 3); }
 /* A row found by its ID (SearchByID): a muted "<Entity> #<ID>" after the label, in the open list only. */
 .pps-option-idmatch { flex: 0 0 auto; margin-left: 0.5rem; font-size: 0.78rem; white-space: nowrap; color: var(--theme-color-text-muted, #6b7686); }
 

@@ -96,6 +96,9 @@ const _DEFAULT_CONFIGURATION =
 	// (searchTerm) => string asked again on every empty render, so a host can say why the list is empty
 	// (e.g. its own scope narrowed it). Rendered as text; an empty result or a throw falls back to the default.
 	EmptyLabel: 'No matches',
+	// How many lines a long option label may wrap to in the open list before it ends in an ellipsis (the
+	// full text stays in the row's tooltip). 1 keeps every row on one line; 0 lets labels wrap without limit.
+	OptionLabelLines: 3,
 
 	// When true, render the resolved selection as plain, non-interactive text (no dropdown / chevron /
 	// clear) — for read-only form views. The host sets PictForm.ReadOnly; the form-input passes it through.
@@ -149,7 +152,7 @@ const _DEFAULT_CONFIGURATION =
 			<div class="pps-panel">
 				{~TS:Pict-Section-Picker-Search:Record.SearchSlot~}
 				<div class="pps-decorate-panel" id="PPS_Decorate_{~D:Record.PickerHash~}">{~T:Pict-Section-Picker-DecoratePanel~}</div>
-				<div class="pps-list" id="PPS_List_{~D:Record.PickerHash~}">
+				<div class="pps-list" id="PPS_List_{~D:Record.PickerHash~}" style="--pps-option-lines: {~D:Record.OptionLabelLines~}">
 					{~T:Pict-Section-Picker-List~}
 				</div>
 			</div>
@@ -849,6 +852,23 @@ class PictViewPicker extends libPictView
 	}
 
 	/**
+	 * The `--pps-option-lines` value for the open list, from OptionLabelLines: a whole number of lines, or
+	 * `none` (0 / false) for no limit. Anything unusable falls back to the default.
+	 *
+	 * @return {string}
+	 */
+	_optionLabelLines()
+	{
+		const tmpLines = this.options.OptionLabelLines;
+		if (tmpLines === 0 || tmpLines === false)
+		{
+			return 'none';
+		}
+		const tmpCount = parseInt(tmpLines, 10);
+		return (tmpCount >= 1) ? String(tmpCount) : String(_DEFAULT_CONFIGURATION.OptionLabelLines);
+	}
+
+	/**
 	 * (Re)compute the picker's render state into AppData: the displayed value / chips + the
 	 * (search-filtered) option list with selected/highlight flags.
 	 */
@@ -915,6 +935,7 @@ class PictViewPicker extends libPictView
 		tmpState.Placeholder = this.options.Placeholder;
 		tmpState.Searchable = !!this.options.Searchable;
 		tmpState.ReadOnly = !!this.options.ReadOnly;
+		tmpState.OptionLabelLines = this._optionLabelLines();
 
 		// Clearable (AllowClear, single mode): the pinned "Any" dropdown row — checked when nothing is
 		// selected ("Any" is the active state) — and the control's inline × while a value is selected.
