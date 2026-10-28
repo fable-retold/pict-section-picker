@@ -178,6 +178,8 @@ class PictInputTypePicker extends libPictInputExtension
 			// EntityTag badge: the record field whose value becomes a Tag pill, ordered by EntityTagLast.
 			EntityTag: tmpPF.EntityTag,
 			TagLast: tmpPF.EntityTagLast,
+			// Lines a long option label may wrap to in the open list (default 3; 0 = no limit).
+			OptionLabelLines: tmpPF.OptionLabelLines,
 			// Numeric-descriptor "unset" sentinel(s) rendered as the placeholder rather than as a value.
 			EmptyValues: this._resolveEmptyValues(pInput),
 			// Per-search contextual scope — the generic hook the host fills.

@@ -51,6 +51,8 @@ The control renders into `#CountryPicker`; `AppData.Form.Country` holds the sele
 
 **Empty list:** `EmptyLabel` sets the text shown when the list has no options for the current search (default `"No matches"`). It can be a string, or a function `(searchTerm) => string` asked again on every empty render, so a host can say why the list is empty, for example that its own scope narrowed it. The label is rendered as text; a blank result or a throw falls back to the default.
 
+**Long option labels:** in the open list a long label wraps up to `OptionLabelLines` lines (default `3`) and then ends in an ellipsis, with the full text in the row's tooltip. `1` keeps every row on one line; `0` lets labels wrap without limit. The selected value and chips in the closed control always stay on one line. The form adapter passes `PictForm.OptionLabelLines` through.
+
 ### Multi
 
 `Mode: 'multi'` — `ValueAddress` holds an **array** of values, rendered as chips with × buttons. Selecting toggles membership and keeps the dropdown open for rapid multi-pick. Two optional mirror bindings (the `EntitySelectorMultiple` contract):
