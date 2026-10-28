@@ -239,6 +239,8 @@ OnCreate: (pTerm) =>
 }
 ```
 
+To offer creation without any typing, set `CreateAlwaysVisible: true`: the **"Create …"** row is pinned at the top of the open list whatever the search says (an empty search or an exact match included), and choosing it with nothing typed calls `OnCreate('')`. Enter still creates only from a typed term, so opening the list and pressing Enter never creates by accident. `CreateLabel` sets the row's text — a string, or `(term) => string`; a blank result or a throw falls back to the default (`Create "<term>"`, or `Create new` with no term).
+
 ## Configuration reference
 
 | Option | Default | Purpose |
@@ -255,6 +257,8 @@ OnCreate: (pTerm) =>
 | `StringArrayValueAddress` | — | (multi) mirror the value array as a csv string. |
 | `SelectedValuesAddress` | — | (multi) mirror the selection as a record array. |
 | `OnCreate` | — | `(term) => {Value, Text}` to enable creatable entries. |
+| `CreateAlwaysVisible` | `false` | Pin the "Create …" row at the top of the list even with no search term. |
+| `CreateLabel` | — | The "Create …" row's text: a string or `(term) => string`. |
 | `OnChange` | — | Called after a selection: single → `(value, record)`, multi → `(values, records)`. |
 | `SingleActivePicker` | `false` | Opt-in: opening this picker closes any other open picker **that also opted in** (one dropdown per page). A picker left `false` neither closes a participant nor is closed by one. Usually enabled fleet-wide by setting `SingleActivePicker: true` on the **provider's** options — `createPicker` seeds it into every picker it creates; an explicit per-picker value overrides. |
 
