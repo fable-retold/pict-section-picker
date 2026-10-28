@@ -86,6 +86,12 @@ const _DEFAULT_CONFIGURATION =
 	// Creatable (Phase 4): OnCreate(searchTerm) => {Value,Text} | Promise<{Value,Text}>. When set, a
 	// "Create …" row appears for a non-empty search term that doesn't exactly match an existing option.
 	OnCreate: false,
+	// Creatable: when true, the "Create …" row is pinned at the top of the open list whatever the search
+	// says — empty or an exact match included — so creating needs no typing (OnCreate then gets '').
+	CreateAlwaysVisible: false,
+	// The "Create …" row's text. A string, or a function (searchTerm) => string. Rendered as text; a blank
+	// result or a throw falls back to the default ('Create "<term>"', or 'Create new' with no term).
+	CreateLabel: false,
 	// Clearable (single mode): when true, the dropdown gets a pinned "Any" row at the top and the
 	// control grows an inline × while a value is selected — either empties the selection and fires
 	// OnChange(null, null). Filters are the natural fit ("Any" = no constraint); multi mode already
@@ -263,7 +269,7 @@ const _DEFAULT_CONFIGURATION =
 			// {~I:~}/{~D:~} tags parse (unlike inside an {~NE:~}).
 			Hash: 'Pict-Section-Picker-Create',
 			Template: /*html*/`
-	<button type="button" class="pps-create" onclick="_Pict.views['{~D:Record.PickerHash~}'].createFromSearch()"><span class="pps-create-ic">{~I:Plus~}</span><span>Create &ldquo;{~D:Record.TermAttr~}&rdquo;</span></button>
+	<button type="button" class="pps-create" onclick="_Pict.views['{~D:Record.PickerHash~}'].createFromSearch()"><span class="pps-create-ic">{~I:Plus~}</span><span class="pps-create-label">{~D:Record.Label~}</span></button>
 `
 		},
 		{
@@ -849,6 +855,32 @@ class PictViewPicker extends libPictView
 	}
 
 	/**
+	 * The "Create …" row's text for a search term: the CreateLabel string, or what a CreateLabel function
+	 * returns for the term. A blank result or a throw falls back to the default.
+	 *
+	 * @param {string} pTerm - The trimmed search term ('' when nothing is typed).
+	 * @return {string} The label, unescaped.
+	 */
+	_resolveCreateLabel(pTerm)
+	{
+		const tmpDefault = (pTerm.length > 0) ? `Create “${pTerm}”` : 'Create new';
+		let tmpLabel = this.options.CreateLabel;
+		if (typeof tmpLabel === 'function')
+		{
+			try
+			{
+				tmpLabel = tmpLabel(pTerm);
+			}
+			catch (pError)
+			{
+				this.pict.log.warn(`Pict-Section-Picker [${this.options.PickerHash}] CreateLabel() threw; showing the default.`, pError);
+				tmpLabel = '';
+			}
+		}
+		return (typeof tmpLabel === 'string' && tmpLabel.length > 0) ? tmpLabel : tmpDefault;
+	}
+
+	/**
 	 * (Re)compute the picker's render state into AppData: the displayed value / chips + the
 	 * (search-filtered) option list with selected/highlight flags.
 	 */
@@ -904,11 +936,15 @@ class PictViewPicker extends libPictView
 		});
 		tmpState.Groups = tmpGroups;
 
-		// Creatable: offer "Create <term>" for a non-empty search that doesn't exactly match a known row.
+		// Creatable: offer "Create <term>" for a non-empty search that doesn't exactly match a known row, or
+		// always when CreateAlwaysVisible pins the row.
 		const tmpTerm = (this._search || '').trim();
-		const tmpCanCreate = (typeof this.options.OnCreate === 'function') && tmpTerm.length > 0
-			&& !this._sourceRows().some((pRow) => String(pRow.Text).trim().toLowerCase() === tmpTerm.toLowerCase());
-		tmpState.CreateSlot = tmpCanCreate ? [ { PickerHash: this.options.PickerHash, Term: tmpTerm, TermAttr: escapeHTML(tmpTerm) } ] : [];
+		const tmpCanCreate = (typeof this.options.OnCreate === 'function')
+			&& ((this.options.CreateAlwaysVisible === true)
+				|| (tmpTerm.length > 0 && !this._sourceRows().some((pRow) => String(pRow.Text).trim().toLowerCase() === tmpTerm.toLowerCase())));
+		tmpState.CreateSlot = tmpCanCreate
+			? [ { PickerHash: this.options.PickerHash, Term: tmpTerm, TermAttr: escapeHTML(tmpTerm), Label: escapeHTML(this._resolveCreateLabel(tmpTerm)) } ]
+			: [];
 
 		tmpState.PickerHash = this.options.PickerHash;
 		tmpState.IsMulti = tmpMulti;
@@ -1464,7 +1500,7 @@ class PictViewPicker extends libPictView
 			{
 				this.select(tmpOptions[this._highlight].ValueKey);
 			}
-			else if ((this._state().CreateSlot || []).length > 0)
+			else if ((this._state().CreateSlot || []).length > 0 && (this._search || '').trim().length > 0)
 			{
 				this.createFromSearch();
 			}
@@ -1607,7 +1643,7 @@ class PictViewPicker extends libPictView
 	createFromSearch()
 	{
 		const tmpTerm = (this._search || '').trim();
-		if (!tmpTerm || typeof this.options.OnCreate !== 'function') { return; }
+		if ((!tmpTerm && this.options.CreateAlwaysVisible !== true) || typeof this.options.OnCreate !== 'function') { return; }
 		Promise.resolve(this.options.OnCreate(tmpTerm)).then((pRecord) =>
 		{
 			if (!pRecord || pRecord.Value === undefined || pRecord.Value === null) { return; }
