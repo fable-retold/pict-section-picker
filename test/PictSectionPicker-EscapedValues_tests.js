@@ -128,6 +128,22 @@ suite
 				Expect(tmpHTML).to.contain('1&quot;', 'the value box carries the escaped value');
 				const tmpValueEl = document.querySelector('#ValHost .pps-value');
 				Expect(tmpValueEl && tmpValueEl.textContent).to.equal('1"', 'the rendered value text decodes back to `1"`');
+				Expect(tmpValueEl.getAttribute('title')).to.equal('1"', 'the full value is on the hover title, so a truncated value stays readable');
+			}
+		);
+
+		test
+		(
+			'the selected-value hover title is empty while the placeholder shows',
+			() =>
+			{
+				document.body.innerHTML = '<div id="EmptyHost"></div>';
+				const tmpPicker = createPicker('Empty', { Placeholder: 'Choose one' });
+				tmpPicker.render();
+
+				const tmpValueEl = document.querySelector('#EmptyHost .pps-value');
+				Expect(tmpValueEl && tmpValueEl.textContent).to.equal('Choose one');
+				Expect(tmpValueEl.getAttribute('title')).to.equal('', 'no tooltip repeats the placeholder');
 			}
 		);
 

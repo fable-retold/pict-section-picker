@@ -190,7 +190,7 @@ const _DEFAULT_CONFIGURATION =
 		{
 			Hash: 'Pict-Section-Picker-Single',
 			Template: /*html*/`
-	<span class="pps-valuebox">{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-value{~NE:Record.NoValue^ pps-placeholder~}">{~D:Record.DisplayTextAttr~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}{~TS:Pict-Section-Picker-CardInfo:Record.CardSlot~}</span>
+	<span class="pps-valuebox">{~TS:Pict-Section-Picker-Tag:Record.TagBeforeSlot~}<span class="pps-value{~NE:Record.NoValue^ pps-placeholder~}" title="{~D:Record.ValueTitleAttr~}">{~D:Record.DisplayTextAttr~}</span>{~TS:Pict-Section-Picker-Tag:Record.TagAfterSlot~}{~TS:Pict-Section-Picker-CardInfo:Record.CardSlot~}</span>
 `
 		},
 		{
@@ -1048,6 +1048,7 @@ class PictViewPicker extends libPictView
 				PickerHash: this.options.PickerHash,
 				DisplayText: tmpDisplayText,
 				DisplayTextAttr: escapeHTML(tmpDisplayText),
+				ValueTitleAttr: tmpHasValue ? escapeHTML(tmpDisplayText) : '',
 				NoValue: !tmpHasValue,
 				CardSlot: (tmpCardEnabled && tmpHasValue) ? [ { PickerHash: this.options.PickerHash, Entity: tmpCardEntity, EntityAttr: escapeHTML(tmpCardEntity), Value: String(tmpValue), ValueAttr: escapeHTML(String(tmpValue)) } ] : [],
 			}, this._tagSlots(this._recordTags(tmpSelected), tmpTagLast)) ];
