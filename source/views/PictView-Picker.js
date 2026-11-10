@@ -1187,7 +1187,8 @@ class PictViewPicker extends libPictView
 	 * Dropdown anchoring & render states
 	 * ----------------------------------
 	 * Anchoring (picked per open by _applyAnchorMode -> _shouldPortal):
-	 *   CSS      : .pps-pop is absolute inside the widget and rides page scroll for free. Default.
+	 *   CSS      : .pps-pop is absolute inside the widget and rides page scroll for free. Default. Opens
+	 *              above (pps-pop-above) when the visible room below is short (_placeInWidget).
 	 *   Portaled : moved to <body> in document coords when a clipping ancestor (overflow != visible)
 	 *              would actually cut it. Still absolute, so it rides scroll too; carries the control's
 	 *              --theme-color-* across since it left any scoped container.
@@ -1220,7 +1221,14 @@ class PictViewPicker extends libPictView
 		const tmpControl = tmpRoot ? /** @type {HTMLElement} */ (tmpRoot.querySelector('.pps-control')) : null;
 		this._portaled = !!tmpControl && this._shouldPortal(tmpControl);
 		if (this._portaled) { this._portalPop(tmpPop); }
-		else { this._restorePop(tmpPop); }
+		else
+		{
+			this._restorePop(tmpPop);
+			if (tmpControl)
+			{
+				this._placeInWidget(tmpPop, tmpControl);
+			}
+		}
 		// A portaled pop is hidden until pps-pop-open is set (it's outside the root's .pps-open rule).
 		tmpPop.classList.toggle('pps-pop-open', !!this._open);
 	}
@@ -1256,23 +1264,112 @@ class PictViewPicker extends libPictView
 		const tmpRect = tmpControl.getBoundingClientRect();
 		const tmpGap = 5;
 		const tmpMargin = 8;
-		const tmpIdeal = 360;
 		const tmpWidth = Math.max(200, Math.round(tmpRect.width));
-		const tmpSpaceBelow = window.innerHeight - tmpRect.bottom - tmpGap - tmpMargin;
-		const tmpSpaceAbove = tmpRect.top - tmpGap - tmpMargin;
-		const tmpBelow = (tmpSpaceBelow >= tmpIdeal) || (tmpSpaceBelow >= tmpSpaceAbove);
+		const tmpPlacement = this._dropdownPlacement(tmpRect, tmpRoot);
 		const tmpPanel = /** @type {HTMLElement} */ (pPop.querySelector('.pps-panel'));
 
 		pPop.style.width = `${tmpWidth}px`;
 		pPop.style.left = `${Math.round(Math.max(tmpMargin, Math.min(tmpRect.left, window.innerWidth - tmpWidth - tmpMargin)) + window.scrollX)}px`;
 		pPop.style.bottom = 'auto';
 		// Document coords (viewport rect + scroll): absolute against <body>, so one placement is enough.
-		pPop.style.top = tmpBelow
+		pPop.style.top = tmpPlacement.Below
 			? `${Math.round(tmpRect.bottom + tmpGap + window.scrollY)}px`
 			: `${Math.round(tmpRect.top - tmpGap + window.scrollY)}px`;
-		if (!tmpBelow) { pPop.style.transform = 'translateY(-100%)'; }
+		if (!tmpPlacement.Below) { pPop.style.transform = 'translateY(-100%)'; }
 		else { pPop.style.transform = ''; }
-		if (tmpPanel) { tmpPanel.style.maxHeight = `${Math.max(0, Math.round(Math.min(tmpBelow ? tmpSpaceBelow : tmpSpaceAbove, tmpIdeal)))}px`; }
+		if (tmpPanel) { tmpPanel.style.maxHeight = `${tmpPlacement.MaxHeight}px`; }
+	}
+
+	/** In-widget (CSS) anchoring: open above the control instead of below when the room below is short,
+	 *  and cap the panel to the room on the chosen side so its list scrolls in place.
+	 *  @param {HTMLElement} pPop @param {HTMLElement} pControl */
+	_placeInWidget(pPop, pControl)
+	{
+		if (typeof window === 'undefined' || typeof pControl.getBoundingClientRect !== 'function')
+		{
+			return;
+		}
+		const tmpRoot = document.getElementById(`PPS_${this.options.PickerHash}`);
+		const tmpPlacement = this._dropdownPlacement(pControl.getBoundingClientRect(), tmpRoot);
+		pPop.classList.toggle('pps-pop-above', !tmpPlacement.Below);
+		const tmpPanel = /** @type {HTMLElement} */ (pPop.querySelector('.pps-panel'));
+		if (tmpPanel)
+		{
+			tmpPanel.style.maxHeight = `min(60vh, ${tmpPlacement.MaxHeight}px)`;
+		}
+	}
+
+	/** Which side of the control the panel opens on, and how tall it may be there. Measured against the
+	 *  visible band of the viewport: the window less any fixed or sticky bar docked to its top or bottom
+	 *  edge, which would otherwise cover the panel. Opens below when the ideal height fits or below has
+	 *  more room than above.
+	 *  @param {{ top: number, bottom: number, left: number, width: number }} pControlRect
+	 *  @param {HTMLElement|null} pRoot - The widget root; bars inside it are the picker's own and ignored.
+	 *  @return {{ Below: boolean, MaxHeight: number }} */
+	_dropdownPlacement(pControlRect, pRoot)
+	{
+		const tmpGap = 5;
+		const tmpMargin = 8;
+		const tmpIdeal = 360;
+		const tmpViewportHeight = window.innerHeight;
+		const tmpProbeX = Math.round(Math.max(0, Math.min(window.innerWidth - 1, pControlRect.left + (Math.max(200, pControlRect.width) / 2))));
+		const tmpVisibleTop = this._edgeBarExtent(tmpProbeX, 'top', pRoot);
+		const tmpVisibleBottom = tmpViewportHeight - this._edgeBarExtent(tmpProbeX, 'bottom', pRoot);
+		const tmpSpaceBelow = tmpVisibleBottom - pControlRect.bottom - tmpGap - tmpMargin;
+		const tmpSpaceAbove = pControlRect.top - tmpVisibleTop - tmpGap - tmpMargin;
+		const tmpBelow = (tmpSpaceBelow >= tmpIdeal) || (tmpSpaceBelow >= tmpSpaceAbove);
+		return { Below: tmpBelow, MaxHeight: Math.max(0, Math.round(Math.min(tmpBelow ? tmpSpaceBelow : tmpSpaceAbove, tmpIdeal))) };
+	}
+
+	/** How far a fixed or sticky bar docked to one viewport edge reaches into the viewport at column pX, or
+	 *  0. Skips anything inside the widget, anything that contains it (a dialog the picker lives in) and
+	 *  anything taller than half the viewport (an overlay, not a bar).
+	 *  @param {number} pX @param {'top'|'bottom'} pEdge @param {HTMLElement|null} pRoot @return {number} */
+	_edgeBarExtent(pX, pEdge, pRoot)
+	{
+		if (typeof document === 'undefined' || typeof window.getComputedStyle !== 'function')
+		{
+			return 0;
+		}
+		const tmpViewportHeight = window.innerHeight;
+		const tmpY = (pEdge === 'top') ? 0 : tmpViewportHeight - 1;
+		let tmpHits = [];
+		if (typeof document.elementsFromPoint === 'function')
+		{
+			tmpHits = document.elementsFromPoint(pX, tmpY) || [];
+		}
+		else if (typeof document.elementFromPoint === 'function')
+		{
+			const tmpHit = document.elementFromPoint(pX, tmpY);
+			if (tmpHit)
+			{
+				tmpHits = [ tmpHit ];
+			}
+		}
+		let tmpExtent = 0;
+		tmpHits.forEach((pHit) =>
+		{
+			let tmpNode = pHit;
+			while (tmpNode && tmpNode.nodeType === 1 && tmpNode !== document.body && tmpNode !== document.documentElement)
+			{
+				const tmpPosition = window.getComputedStyle(tmpNode).position;
+				if (tmpPosition === 'fixed' || tmpPosition === 'sticky')
+				{
+					const tmpBar = /** @type {HTMLElement} */ (tmpNode);
+					const tmpOwn = pRoot && (pRoot.contains(tmpBar) || tmpBar.contains(pRoot));
+					const tmpRect = tmpBar.getBoundingClientRect();
+					const tmpDocked = (pEdge === 'top') ? (tmpRect.top <= 1) : (tmpRect.bottom >= tmpViewportHeight - 1);
+					if (!tmpOwn && tmpDocked && tmpRect.height > 0 && tmpRect.height <= tmpViewportHeight / 2)
+					{
+						const tmpReach = (pEdge === 'top') ? tmpRect.bottom : tmpViewportHeight - tmpRect.top;
+						tmpExtent = Math.max(tmpExtent, Math.min(tmpReach, tmpViewportHeight / 2));
+					}
+					break;
+				}
+				tmpNode = tmpNode.parentElement;
+			}
+		});
+		return tmpExtent;
 	}
 
 	/** Re-home a portaled panel and drop everything the portal wrote. Doubles as the orphan sweeper: if a
@@ -1290,6 +1387,7 @@ class PictViewPicker extends libPictView
 			tmpRoot.appendChild(pPop);
 		}
 		pPop.classList.remove('pps-pop-portal');
+		pPop.classList.remove('pps-pop-above');
 		// Clear the inline offsets, or they'd override the stylesheet and strand the panel.
 		pPop.style.top = '';
 		pPop.style.left = '';
@@ -1343,9 +1441,8 @@ class PictViewPicker extends libPictView
 	 *  @param {HTMLElement} pElement @return {boolean} */
 	_hasClippingAncestor(pElement) { return !!this._clippingAncestor(pElement); }
 
-	/** Would the clipper cut the panel if it opened in place? The CSS path always opens downward and never
-	 *  flips, so project that worst-case box (control bottom + gap, up to max height) and test whether any
-	 *  edge falls outside the clipper. 1px slack avoids a needless portal on a flush edge.
+	/** Would the clipper cut the panel if it opened in place? Project the downward box (control bottom +
+	 *  gap, up to max height) and test whether any edge falls outside the clipper. 1px slack avoids a needless portal on a flush edge.
 	 *  @param {HTMLElement} pControl @param {HTMLElement} pClipper @return {boolean} */
 	_clipBites(pControl, pClipper)
 	{

@@ -76,10 +76,13 @@ const _PickerCSS = /*css*/`
 .pps.pps-open .pps-backdrop { display: block; }
 .pps.pps-open .pps-control { position: relative; z-index: 1; }
 /* Default anchoring: absolute against the control's own box (.pps is position:relative), so the panel
-   rides page scroll for free — no measuring, no listeners. Works because a typical form row sets no
-   overflow to clip it. */
+   rides page scroll for free — no listeners, one measurement per open to pick up or down. Works because a
+   typical form row sets no overflow to clip it. */
 .pps-pop { position: absolute; z-index: 40; top: calc(100% + 0.3rem); left: 0; right: 0; min-width: 200px; display: none; }
 .pps.pps-open .pps-pop { display: block; }
+/* Opened upward by the view when the room below the control (less any fixed bar docked to the viewport
+   edge) is short. */
+.pps-pop.pps-pop-above { top: auto; bottom: calc(100% + 0.3rem); }
 /* Portal fallback, applied by the view when a clipping ancestor would cut the panel: it moves the pop to
    <body> and places it in DOCUMENT coords. Still absolute (not fixed) so it rides scroll like the
    default. On <body> it's outside the .pps.pps-open rule, so visibility keys off pps-pop-open — which
